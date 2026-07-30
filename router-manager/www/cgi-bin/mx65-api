@@ -1,0 +1,2021 @@
+#!/bin/sh
+
+TOKEN_FILE="/etc/mx65-manager/token"
+DEVICE_NOTES_FILE="/etc/mx65-manager/device-notes.tsv"
+PORT_NOTES_FILE="/etc/mx65-manager/port-notes.tsv"
+POST_BODY_LOADED=0
+POST_BODY=""
+
+status() {
+  printf 'Status: %s\r\n' "$1"
+}
+
+plain() {
+  printf 'Content-Type: text/plain; charset=utf-8\r\n'
+  printf 'Cache-Control: no-store\r\n'
+  printf 'X-Content-Type-Options: nosniff\r\n'
+  printf '\r\n'
+}
+
+cookie_secure_attr() {
+  case "$HTTPS:$SERVER_PORT" in
+    on:*|*:443) printf '; Secure' ;;
+  esac
+}
+
+fail() {
+  status "${2:-400} Error"
+  plain
+  printf '%s\n' "$1"
+  exit 0
+}
+
+urldecode() {
+  printf '%s' "$1" | sed 's/+/ /g;s/%3A/:/g;s/%3a/:/g;s/%2F/\//g;s/%2f/\//g;s/%2E/./g;s/%2e/./g;s/%2D/-/g;s/%2d/-/g;s/%5F/_/g;s/%5f/_/g'
+}
+
+load_post_body() {
+  [ "$POST_BODY_LOADED" = "1" ] && return
+  POST_BODY_LOADED=1
+  [ "$REQUEST_METHOD" = "POST" ] || return
+  length="${CONTENT_LENGTH:-0}"
+  printf '%s' "$length" | grep -Eq '^[0-9]{1,5}$' || return
+  [ "$length" -le 12000 ] || return
+  [ "$length" -gt 0 ] || return
+  POST_BODY="$(dd bs=1 count="$length" 2>/dev/null)"
+}
+
+param_from_data() {
+  data="$1"
+  key="$2"
+  printf '%s\n' "$data" | tr '&' '\n' | while IFS='=' read -r name value; do
+    [ "$name" = "$key" ] || continue
+    urldecode "$value"
+    break
+  done
+}
+
+param() {
+  key="$1"
+  value="$(param_from_data "$QUERY_STRING" "$key")"
+  if [ -z "$value" ]; then
+    load_post_body
+    value="$(param_from_data "$POST_BODY" "$key")"
+  fi
+  printf '%s' "$value"
+}
+
+post_param() {
+  key="$1"
+  load_post_body
+  param_from_data "$POST_BODY" "$key"
+}
+
+cookie_param() {
+  key="$1"
+  printf '%s\n' "$HTTP_COOKIE" | tr ';' '\n' | while IFS='=' read -r name value; do
+    name="$(printf '%s' "$name" | sed 's/^ *//;s/ *$//')"
+    [ "$name" = "$key" ] || continue
+    urldecode "$value"
+    break
+  done
+}
+
+require_token() {
+  [ -s "$TOKEN_FILE" ] || fail "Manager token is not installed on this router." "401"
+  expected="$(cat "$TOKEN_FILE" 2>/dev/null)"
+  provided="$HTTP_X_MX65_TOKEN"
+  [ -n "$provided" ] || provided="$(cookie_param mx65_token)"
+  [ -n "$provided" ] || fail "Missing manager token. Paste the token, click Save Token, then Refresh." "401"
+  [ "$provided" = "$expected" ] || fail "Invalid manager token." "403"
+}
+
+require_csrf() {
+  cookie="$(cookie_param mx65_csrf)"
+  header="$HTTP_X_MX65_CSRF"
+  [ -n "$header" ] || header="$(post_param csrf)"
+  [ -n "$cookie" ] || fail "Missing security session. Save the manager token again, then retry." "403"
+  [ -n "$header" ] || fail "Missing request safety header. Refresh and retry." "403"
+  [ "$cookie" = "$header" ] || fail "Invalid request safety header. Refresh and retry." "403"
+}
+
+session_start() {
+  [ -s "$TOKEN_FILE" ] || fail "Manager token is not installed on this router." "401"
+  expected="$(cat "$TOKEN_FILE" 2>/dev/null)"
+  provided="$HTTP_X_MX65_TOKEN"
+  [ -n "$provided" ] || provided="$(post_param token)"
+  [ -n "$provided" ] || fail "Paste the manager token before saving." "401"
+  [ "$provided" = "$expected" ] || fail "Invalid manager token." "403"
+  if command -v hexdump >/dev/null 2>&1; then
+    csrf="$(dd if=/dev/urandom bs=24 count=1 2>/dev/null | hexdump -ve '1/1 "%02x"')"
+  else
+    csrf="$(date; cat /proc/uptime 2>/dev/null; cat /proc/sys/kernel/random/uuid 2>/dev/null) | sha256sum | awk '{print $1}'"
+  fi
+  secure="$(cookie_secure_attr)"
+  printf 'Content-Type: text/plain; charset=utf-8\r\n'
+  printf 'Cache-Control: no-store\r\n'
+  printf 'X-Content-Type-Options: nosniff\r\n'
+  printf 'Set-Cookie: mx65_token=%s; Path=/; SameSite=Strict; HttpOnly%s; Max-Age=31536000\r\n' "$provided" "$secure"
+  printf 'Set-Cookie: mx65_csrf=%s; Path=/; SameSite=Strict%s; Max-Age=31536000\r\n' "$csrf" "$secure"
+  printf '\r\n'
+  printf 'session=ok\n'
+}
+
+section() {
+  printf '\n__MX65_SECTION__ %s\n' "$1"
+}
+
+valid_target() {
+  printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.:-]{1,255}$'
+}
+
+valid_mac() {
+  printf '%s' "$1" | grep -Eiq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'
+}
+
+list_ports() {
+  for path in /sys/class/net/wan[0-9]* /sys/class/net/lan[0-9]*; do
+    [ -e "$path" ] || continue
+    basename "$path"
+  done | sort -V
+}
+
+list_lan_ports() {
+  list_ports | grep -E '^lan[0-9]+$' || true
+}
+
+valid_port() {
+  printf '%s' "$1" | grep -Eq '^(wan|lan)[0-9]+$' || return 1
+  [ -d "/sys/class/net/$1" ]
+}
+
+valid_lan_port() {
+  printf '%s' "$1" | grep -Eq '^lan[0-9]+$' || return 1
+  [ -d "/sys/class/net/$1" ]
+}
+
+valid_ipv4() {
+  printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || return 1
+  old_ifs="$IFS"
+  IFS=.
+  set -- $1
+  IFS="$old_ifs"
+  for octet in "$1" "$2" "$3" "$4"; do
+    [ "$octet" -ge 0 ] 2>/dev/null && [ "$octet" -le 255 ] 2>/dev/null || return 1
+  done
+}
+
+valid_netmask() {
+  case "$1" in
+    255.255.255.0|255.255.255.128|255.255.255.192|255.255.255.224|255.255.255.240|255.255.255.248|255.255.255.252|255.255.0.0|255.255.252.0|255.255.248.0|255.255.240.0|255.255.224.0|255.255.192.0|255.255.128.0) return 0 ;;
+  esac
+  return 1
+}
+
+netmask_to_prefix() {
+  case "$1" in
+    255.0.0.0) printf '8' ;;
+    255.128.0.0) printf '9' ;;
+    255.192.0.0) printf '10' ;;
+    255.224.0.0) printf '11' ;;
+    255.240.0.0) printf '12' ;;
+    255.248.0.0) printf '13' ;;
+    255.252.0.0) printf '14' ;;
+    255.254.0.0) printf '15' ;;
+    255.255.0.0) printf '16' ;;
+    255.255.128.0) printf '17' ;;
+    255.255.192.0) printf '18' ;;
+    255.255.224.0) printf '19' ;;
+    255.255.240.0) printf '20' ;;
+    255.255.248.0) printf '21' ;;
+    255.255.252.0) printf '22' ;;
+    255.255.254.0) printf '23' ;;
+    255.255.255.0) printf '24' ;;
+    255.255.255.128) printf '25' ;;
+    255.255.255.192) printf '26' ;;
+    255.255.255.224) printf '27' ;;
+    255.255.255.240) printf '28' ;;
+    255.255.255.248) printf '29' ;;
+    255.255.255.252) printf '30' ;;
+    *) return 1 ;;
+  esac
+}
+
+valid_vlan_id() {
+  printf '%s' "$1" | grep -Eq '^[0-9]{1,4}$' || return 1
+  [ "$1" -ge 2 ] 2>/dev/null && [ "$1" -le 4094 ] 2>/dev/null
+}
+
+valid_vlan_any() {
+  printf '%s' "$1" | grep -Eq '^[0-9]{1,4}$' || return 1
+  [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 4094 ] 2>/dev/null
+}
+
+valid_vlan_list() {
+  value="$1"
+  [ -n "$value" ] || return 0
+  printf '%s' "$value" | grep -Eq '^[0-9]{1,4}(,[0-9]{1,4})*$' || return 1
+  printf '%s' "$value" | tr ',' '\n' | while read -r vlan; do
+    valid_vlan_any "$vlan" || exit 1
+  done
+}
+
+valid_dhcp_number() {
+  printf '%s' "$1" | grep -Eq '^[0-9]{1,3}$' || return 1
+  [ "$1" -ge 0 ] 2>/dev/null && [ "$1" -le 254 ] 2>/dev/null
+}
+
+valid_leasetime() {
+  printf '%s' "$1" | grep -Eq '^[0-9]{1,4}[hm]$'
+}
+
+valid_port_spec() {
+  printf '%s' "$1" | grep -Eq '^([0-9]{1,5})(-[0-9]{1,5})?$' || return 1
+  first="$(printf '%s' "$1" | cut -d- -f1)"
+  last="$(printf '%s' "$1" | cut -s -d- -f2)"
+  [ "$first" -ge 1 ] 2>/dev/null && [ "$first" -le 65535 ] 2>/dev/null || return 1
+  if [ -n "$last" ]; then
+    [ "$last" -ge "$first" ] 2>/dev/null && [ "$last" -le 65535 ] 2>/dev/null || return 1
+  fi
+}
+
+port_span() {
+  value="$1"
+  first="$(printf '%s' "$value" | cut -d- -f1)"
+  last="$(printf '%s' "$value" | cut -s -d- -f2)"
+  [ -n "$last" ] || last="$first"
+  printf '%s' "$((last - first + 1))"
+}
+
+valid_remote_ip_list() {
+  value="$1"
+  [ -n "$value" ] || return 0
+  case "$value" in
+    any|Any|ANY) return 0 ;;
+  esac
+  printf '%s' "$value" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?(,([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?)*$' || return 1
+  printf '%s' "$value" | tr ',' '\n' | while IFS=/ read -r ip prefix; do
+    valid_ipv4 "$ip" || exit 1
+    if [ -n "$prefix" ]; then
+      [ "$prefix" -ge 0 ] 2>/dev/null && [ "$prefix" -le 32 ] 2>/dev/null || exit 1
+    fi
+  done
+}
+
+valid_cidr() {
+  value="$1"
+  ip="${value%/*}"
+  prefix="${value#*/}"
+  [ "$ip" != "$value" ] || return 1
+  valid_ipv4 "$ip" || return 1
+  [ "$prefix" -ge 0 ] 2>/dev/null && [ "$prefix" -le 32 ] 2>/dev/null
+}
+
+valid_optional_cidr_or_any() {
+  value="$1"
+  [ -n "$value" ] || return 0
+  case "$value" in
+    any|Any|ANY) return 0 ;;
+  esac
+  valid_cidr "$value" || valid_ipv4 "$value"
+}
+
+valid_uci_id() {
+  printf '%s' "$1" | grep -Eq '^mx65_[0-9A-Za-z_]+$'
+}
+
+valid_route_ref() {
+  case "$1" in
+    @route\[[0-9]*\])
+      printf '%s' "$1" | grep -Eq '^@route\[[0-9]{1,3}\]$'
+      ;;
+    *)
+      printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_]{1,64}$'
+      ;;
+  esac
+}
+
+network_interface_exists() {
+  iface="$1"
+  case "$iface" in
+    lan|wan|vlan[0-9]*)
+      [ "$(uci -q get network."$iface" 2>/dev/null)" = "interface" ]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+clean_note_value() {
+  key="$1"
+  value="$(param "$key")"
+  [ ${#value} -le 96 ] || fail "$key is too long."
+  printf '%s' "$value" | grep -Eq '^[A-Za-z0-9 _.,:@/()+-]*$' || fail "$key has unsupported characters."
+  printf '%s' "$value"
+}
+
+clean_network_label() {
+  key="$1"
+  value="$(param "$key")"
+  [ ${#value} -le 32 ] || fail "$key is too long."
+  printf '%s' "$value" | grep -Eq '^[A-Za-z0-9 _.-]*$' || fail "$key has unsupported characters."
+  printf '%s' "$value"
+}
+
+service_action() {
+  service="$(param service)"
+  action="$(param action)"
+  case "$service:$action" in
+    firewall:status|firewall:reload|firewall:restart) ;;
+    dnsmasq:status|dnsmasq:restart) ;;
+    cloudflared:status|cloudflared:start|cloudflared:stop|cloudflared:restart|cloudflared:enable|cloudflared:disable) ;;
+    *) fail "Unsupported service action." ;;
+  esac
+  [ -x "/etc/init.d/$service" ] || fail "$service init script is not installed."
+  plain
+  "/etc/init.d/$service" "$action" 2>&1
+}
+
+rule_path_by_name() {
+  name="$1"
+  uci show firewall 2>/dev/null | sed -n "s/^\(firewall\.@rule\[[0-9][0-9]*\]\)\.name='$name'$/\1/p" | head -1
+}
+
+zone_path_by_name() {
+  name="$1"
+  uci show firewall 2>/dev/null | sed -n "s/^\(firewall\.@zone\[[0-9][0-9]*\]\)\.name='$name'$/\1/p" | head -1
+}
+
+rule_enabled_by_name() {
+  path="$(rule_path_by_name "$1")"
+  if [ -z "$path" ]; then
+    printf 'missing'
+    return
+  fi
+  uci -q get "$path.enabled" 2>/dev/null || printf '1'
+}
+
+security_report() {
+  wan_zone="$(zone_path_by_name wan)"
+  redirect_count="$(uci show firewall 2>/dev/null | sed -n 's/^\(firewall\.[^=]*\)=redirect$/\1/p' | while read -r redirect; do [ "$(uci -q get "$redirect.src" 2>/dev/null)" = "wan" ] && printf 'x\n'; done | wc -l | tr -d ' ')"
+  root_hash="$(awk -F: '$1=="root"{print $2}' /etc/shadow 2>/dev/null)"
+  authorized_key_count="$(cat /etc/dropbear/authorized_keys /root/.ssh/authorized_keys 2>/dev/null | sed '/^[[:space:]]*$/d;/^[[:space:]]*#/d' | sort -u | wc -l | tr -d ' ')"
+  uhttpd_http="$(uci -q get uhttpd.main.listen_http 2>/dev/null | tr '\n' ' ')"
+  uhttpd_https="$(uci -q get uhttpd.main.listen_https 2>/dev/null | tr '\n' ' ')"
+  printf 'defaults_input=%s\n' "$(uci -q get firewall.@defaults[0].input 2>/dev/null || printf missing)"
+  printf 'defaults_forward=%s\n' "$(uci -q get firewall.@defaults[0].forward 2>/dev/null || printf missing)"
+  printf 'drop_invalid=%s\n' "$(uci -q get firewall.@defaults[0].drop_invalid 2>/dev/null || printf 0)"
+  printf 'syn_flood=%s\n' "$(uci -q get firewall.@defaults[0].syn_flood 2>/dev/null || printf 0)"
+  printf 'wan_input=%s\n' "$([ -n "$wan_zone" ] && uci -q get "$wan_zone.input" 2>/dev/null || printf missing)"
+  printf 'wan_forward=%s\n' "$([ -n "$wan_zone" ] && uci -q get "$wan_zone.forward" 2>/dev/null || printf missing)"
+  printf 'wan_masq=%s\n' "$([ -n "$wan_zone" ] && uci -q get "$wan_zone.masq" 2>/dev/null || printf missing)"
+  printf 'manager_wan_block=%s\n' "$(uci -q get firewall.mx65_manager_wan_block.target 2>/dev/null || printf missing)"
+  printf 'manager_wan_ports=%s\n' "$(uci -q get firewall.mx65_manager_wan_block.dest_port 2>/dev/null || printf missing)"
+  printf 'allow_ping_enabled=%s\n' "$(rule_enabled_by_name Allow-Ping)"
+  printf 'allow_ipsec_esp_enabled=%s\n' "$(rule_enabled_by_name Allow-IPSec-ESP)"
+  printf 'allow_isakmp_enabled=%s\n' "$(rule_enabled_by_name Allow-ISAKMP)"
+  printf 'redirect_count=%s\n' "$redirect_count"
+  printf 'force_dns=%s\n' "$([ "$(uci -q get firewall.mx65_force_dns.src 2>/dev/null)" = "lan" ] && [ "$(uci -q get firewall.mx65_force_dns.target 2>/dev/null)" = "DNAT" ] && printf present || printf missing)"
+  printf 'block_dot=%s\n' "$(uci -q get firewall.mx65_block_dot.target 2>/dev/null || printf missing)"
+  printf 'ssh_password_auth=%s\n' "$(uci -q get dropbear.main.PasswordAuth 2>/dev/null || printf missing)"
+  printf 'ssh_root_password_auth=%s\n' "$(uci -q get dropbear.main.RootPasswordAuth 2>/dev/null || printf missing)"
+  printf 'ssh_interface=%s\n' "$(uci -q get dropbear.main.Interface 2>/dev/null || printf any)"
+  printf 'ssh_port=%s\n' "$(uci -q get dropbear.main.Port 2>/dev/null || printf 22)"
+  printf 'ssh_authorized_keys=%s\n' "${authorized_key_count:-0}"
+  [ -n "$root_hash" ] && [ "$root_hash" != "!" ] && [ "$root_hash" != "*" ] && printf 'root_password=set\n' || printf 'root_password=blank_or_locked\n'
+  printf 'uhttpd_http=%s\n' "${uhttpd_http:-missing}"
+  printf 'uhttpd_https=%s\n' "${uhttpd_https:-missing}"
+  printf 'uhttpd_redirect_https=%s\n' "$(uci -q get uhttpd.main.redirect_https 2>/dev/null || printf 0)"
+  printf 'uhttpd_rfc1918_filter=%s\n' "$(uci -q get uhttpd.main.rfc1918_filter 2>/dev/null || printf missing)"
+  printf 'dns_localservice=%s\n' "$(uci -q get dhcp.@dnsmasq[0].localservice 2>/dev/null || printf missing)"
+  dns_interfaces="$(uci -q get dhcp.@dnsmasq[0].interface 2>/dev/null | tr '\n' ' ')"
+  printf 'dns_interfaces=%s\n' "${dns_interfaces:-all}"
+  printf 'dns_rebind_protection=%s\n' "$(uci -q get dhcp.@dnsmasq[0].rebind_protection 2>/dev/null || printf missing)"
+  printf 'dhcp_wan_ignore=%s\n' "$(uci -q get dhcp.wan.ignore 2>/dev/null || printf missing)"
+  printf 'upnp_service=%s\n' "$([ -x /etc/init.d/miniupnpd ] && /etc/init.d/miniupnpd enabled >/dev/null 2>&1 && printf enabled || printf absent_or_disabled)"
+  printf 'wan6_disabled=%s\n' "$(uci -q get network.wan6.disabled 2>/dev/null || printf 0)"
+  printf 'odhcpd_enabled=%s\n' "$([ -x /etc/init.d/odhcpd ] && /etc/init.d/odhcpd enabled >/dev/null 2>&1 && printf 1 || printf 0)"
+}
+
+disable_rule_by_name() {
+  name="$1"
+  path="$(rule_path_by_name "$name")"
+  if [ -n "$path" ]; then
+    uci set "$path.enabled=0"
+    printf 'disabled %s\n' "$name"
+  else
+    printf 'missing %s\n' "$name"
+  fi
+}
+
+security_apply_inner() {
+  mkdir -p /etc/mx65-manager/backups
+  backup="/etc/mx65-manager/backups/firewall-security-$(date +%Y%m%d-%H%M%S).uci"
+  uci export firewall > "$backup" || return 1
+  chmod 600 "$backup" 2>/dev/null || true
+  printf 'backup=%s\n' "$backup"
+
+  lan_zone="$(zone_path_by_name lan)"
+  wan_zone="$(zone_path_by_name wan)"
+  [ -n "$wan_zone" ] || { printf 'wan zone missing\n'; return 1; }
+
+  uci set firewall.@defaults[0].input='REJECT'
+  uci set firewall.@defaults[0].output='ACCEPT'
+  uci set firewall.@defaults[0].forward='REJECT'
+  uci set firewall.@defaults[0].syn_flood='1'
+  uci set firewall.@defaults[0].drop_invalid='1'
+
+  if [ -n "$lan_zone" ]; then
+    uci set "$lan_zone.input=ACCEPT"
+    uci set "$lan_zone.output=ACCEPT"
+    uci set "$lan_zone.forward=ACCEPT"
+  fi
+
+  uci set "$wan_zone.input=REJECT"
+  uci set "$wan_zone.output=ACCEPT"
+  uci set "$wan_zone.forward=DROP"
+  uci set "$wan_zone.masq=1"
+  uci set "$wan_zone.mtu_fix=1"
+
+  disable_rule_by_name Allow-Ping
+  disable_rule_by_name Allow-IPSec-ESP
+  disable_rule_by_name Allow-ISAKMP
+
+  uci -q delete firewall.mx65_manager_wan_block
+  uci set firewall.mx65_manager_wan_block='rule'
+  uci set firewall.mx65_manager_wan_block.name='Block My-Rack-E local manager from WAN'
+  uci set firewall.mx65_manager_wan_block.src='wan'
+  uci set firewall.mx65_manager_wan_block.proto='tcp'
+  uci set firewall.mx65_manager_wan_block.dest_port='22 80 443'
+  uci set firewall.mx65_manager_wan_block.target='REJECT'
+
+  uci -q delete firewall.mx65_force_dns
+  uci set firewall.mx65_force_dns='redirect'
+  uci set firewall.mx65_force_dns.name='Force LAN DNS through My-Rack-E'
+  uci set firewall.mx65_force_dns.src='lan'
+  uci set firewall.mx65_force_dns.proto='tcp udp'
+  uci set firewall.mx65_force_dns.src_dport='53'
+  uci set firewall.mx65_force_dns.dest_port='53'
+  uci set firewall.mx65_force_dns.target='DNAT'
+
+  uci -q delete firewall.mx65_block_dot
+  uci set firewall.mx65_block_dot='rule'
+  uci set firewall.mx65_block_dot.name='Block direct DNS-over-TLS from LAN'
+  uci set firewall.mx65_block_dot.src='lan'
+  uci set firewall.mx65_block_dot.dest='wan'
+  uci set firewall.mx65_block_dot.proto='tcp udp'
+  uci set firewall.mx65_block_dot.dest_port='853'
+  uci set firewall.mx65_block_dot.target='REJECT'
+
+  if [ "$(cat /etc/dropbear/authorized_keys /root/.ssh/authorized_keys 2>/dev/null | sed '/^[[:space:]]*$/d;/^[[:space:]]*#/d' | wc -l | tr -d ' ')" -gt 0 ]; then
+    uci set dropbear.main.PasswordAuth='off'
+    uci set dropbear.main.RootPasswordAuth='off'
+    uci set dropbear.main.Interface='lan'
+    uci commit dropbear || return 1
+  fi
+
+  lan_ip="$(uci -q get network.lan.ipaddr 2>/dev/null || printf 192.168.1.1)"
+  uci -q set uhttpd.main.rfc1918_filter='1'
+  uci -q set uhttpd.main.redirect_https='1'
+  uci -q delete uhttpd.main.listen_http
+  uci -q add_list uhttpd.main.listen_http="$lan_ip:80"
+  uci -q delete uhttpd.main.listen_https
+  uci -q add_list uhttpd.main.listen_https="$lan_ip:443"
+  uci -q commit uhttpd || true
+
+  uci -q set dhcp.@dnsmasq[0].localservice='1'
+  uci -q delete dhcp.@dnsmasq[0].interface
+  uci -q add_list dhcp.@dnsmasq[0].interface='br-lan'
+  uci -q add_list dhcp.@dnsmasq[0].interface='lo'
+  uci -q set dhcp.@dnsmasq[0].rebind_protection='1'
+  uci -q set dhcp.@dnsmasq[0].domainneeded='1'
+  uci -q set dhcp.@dnsmasq[0].boguspriv='1'
+  uci -q set dhcp.wan.ignore='1'
+  uci -q set dhcp.lan.dhcpv6='disabled'
+  uci -q set dhcp.lan.ra='disabled'
+  uci -q delete dhcp.lan.ra_flags
+  uci -q commit dhcp || true
+
+  uci -q set network.wan6.disabled='1'
+  uci -q delete network.lan.ip6assign
+  uci -q commit network || true
+
+  if [ -x /etc/init.d/miniupnpd ]; then
+    /etc/init.d/miniupnpd stop >/dev/null 2>&1 || true
+    /etc/init.d/miniupnpd disable >/dev/null 2>&1 || true
+  fi
+
+  uci commit firewall || return 1
+  if ! fw4 check 2>&1; then
+    printf 'fw4 check failed; restoring %s\n' "$backup"
+    uci import firewall < "$backup"
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1 || true
+    return 1
+  fi
+  /etc/init.d/firewall reload 2>&1
+  /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+  /etc/init.d/odhcpd stop >/dev/null 2>&1 || true
+  /etc/init.d/odhcpd disable >/dev/null 2>&1 || true
+  /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+  /etc/init.d/dropbear restart >/dev/null 2>&1 || true
+}
+
+security_apply() {
+  tmp="/tmp/mx65-security-apply.$$"
+  security_apply_inner > "$tmp" 2>&1
+  rc="$?"
+  plain
+  section security_apply
+  cat "$tmp"
+  rm -f "$tmp"
+  printf 'result=%s\n' "$([ "$rc" = 0 ] && printf pass || printf failed)"
+  section security
+  security_report
+  section security_fw4
+  fw4 check 2>&1 || true
+}
+
+security_status() {
+  plain
+  section security
+  security_report
+  section security_fw4
+  fw4 check 2>&1 || true
+}
+
+security_rollback() {
+  backup="$(ls -1t /etc/mx65-manager/backups/firewall-security-*.uci 2>/dev/null | head -1)"
+  [ -n "$backup" ] || fail "No firewall security backup is available."
+  case "$backup" in
+    /etc/mx65-manager/backups/firewall-security-*.uci) ;;
+    *) fail "Unsafe firewall backup path." ;;
+  esac
+  tmp="/tmp/mx65-security-rollback.$$"
+  {
+    printf 'restoring=%s\n' "$backup"
+    uci import firewall < "$backup"
+    uci commit firewall
+    fw4 check
+    /etc/init.d/firewall reload
+  } > "$tmp" 2>&1
+  rc="$?"
+  plain
+  section security_rollback
+  cat "$tmp"
+  rm -f "$tmp"
+  printf 'result=%s\n' "$([ "$rc" = 0 ] && printf pass || printf failed)"
+  section security
+  security_report
+  section security_fw4
+  fw4 check 2>&1 || true
+}
+
+network_device_by_name() {
+  name="$1"
+  uci show network 2>/dev/null | sed -n "s/^\(network\.[^=]*\)\.name='$name'$/\1/p" | head -1
+}
+
+bridge_vlan_by_id() {
+  vlan="$1"
+  uci show network 2>/dev/null | sed -n 's/^\(network\.[^=]*\)=bridge-vlan$/\1/p' | while read -r section_path; do
+    [ "$(uci -q get "$section_path.device" 2>/dev/null)" = "br-lan" ] || continue
+    [ "$(uci -q get "$section_path.vlan" 2>/dev/null)" = "$vlan" ] || continue
+    printf '%s\n' "$section_path"
+    break
+  done
+}
+
+schedule_network_reload() {
+  (
+    sleep 2
+    /etc/init.d/network reload >/dev/null 2>&1 || /etc/init.d/network restart >/dev/null 2>&1 || true
+    /etc/init.d/firewall reload >/dev/null 2>&1 || true
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+  ) >/dev/null 2>&1 &
+}
+
+network_backup() {
+  mkdir -p /etc/mx65-manager/backups
+  backup="/etc/mx65-manager/backups/network-addressing-$(date +%Y%m%d-%H%M%S).uci"
+  uci export network > "$backup.network" 2>/dev/null || return 1
+  uci export dhcp > "$backup.dhcp" 2>/dev/null || return 1
+  uci export firewall > "$backup.firewall" 2>/dev/null || return 1
+  uci export uhttpd > "$backup.uhttpd" 2>/dev/null || true
+  cat "$backup.network" "$backup.dhcp" "$backup.firewall" "$backup.uhttpd" > "$backup" 2>/dev/null || return 1
+  chmod 600 "$backup" "$backup.network" "$backup.dhcp" "$backup.firewall" "$backup.uhttpd" 2>/dev/null || true
+  printf '%s' "$backup"
+}
+
+restore_network_backup() {
+  backup="$1"
+  [ -s "$backup.network" ] && uci import network < "$backup.network"
+  [ -s "$backup.dhcp" ] && uci import dhcp < "$backup.dhcp"
+  [ -s "$backup.firewall" ] && uci import firewall < "$backup.firewall"
+  [ -s "$backup.uhttpd" ] && uci import uhttpd < "$backup.uhttpd"
+  uci commit network
+  uci commit dhcp
+  uci commit firewall
+  uci commit uhttpd 2>/dev/null || true
+}
+
+ensure_br_lan_vlan_filtering() {
+  br_lan="$(network_device_by_name br-lan)"
+  if [ -z "$br_lan" ]; then
+    uci set network.mx65_br_lan='device'
+    uci set network.mx65_br_lan.name='br-lan'
+    uci set network.mx65_br_lan.type='bridge'
+    for port in $(list_lan_ports); do
+      uci add_list network.mx65_br_lan.ports="$port"
+    done
+    br_lan="network.mx65_br_lan"
+  fi
+  uci set "$br_lan.vlan_filtering=1"
+}
+
+port_has_custom_untagged_vlan() {
+  port="$1"
+  uci show network 2>/dev/null | sed -n 's/^\(network\.[^=]*\)=bridge-vlan$/\1/p' | while read -r section_path; do
+    vlan="$(uci -q get "$section_path.vlan" 2>/dev/null)"
+    [ "$vlan" != "1" ] || continue
+    for item in $(uci -q get "$section_path.ports" 2>/dev/null); do
+      case "$item" in
+        "$port":u*) printf 'yes\n'; exit 0 ;;
+      esac
+    done
+  done | grep -q yes
+}
+
+rebuild_native_vlan_ports() {
+  native="$(bridge_vlan_by_id 1)"
+  if [ -z "$native" ]; then
+    uci set network.mx65_native='bridge-vlan'
+    uci set network.mx65_native.device='br-lan'
+    uci set network.mx65_native.vlan='1'
+    native="network.mx65_native"
+  fi
+  uci -q delete "$native.ports"
+  for port in $(list_lan_ports); do
+    if port_has_custom_untagged_vlan "$port"; then
+      continue
+    fi
+    uci add_list "$native.ports=$port:u*"
+  done
+}
+
+refresh_dnsmasq_interfaces() {
+  uci -q delete dhcp.@dnsmasq[0].interface
+  uci -q add_list dhcp.@dnsmasq[0].interface='lo'
+  lan_device="$(uci -q get network.lan.device 2>/dev/null || printf br-lan)"
+  uci -q add_list dhcp.@dnsmasq[0].interface="$lan_device"
+  uci show network 2>/dev/null | sed -n 's/^\(network\.[^=]*\)=interface$/\1/p' | while read -r section_path; do
+    device="$(uci -q get "$section_path.device" 2>/dev/null)"
+    case "$device" in
+      br-lan.[0-9]*) uci -q add_list dhcp.@dnsmasq[0].interface="$device" ;;
+    esac
+  done
+}
+
+gateway_from_cidr_parts() {
+  ip="$1"
+  prefix="$2"
+  awk -v ip="$ip" -v prefix="$prefix" '
+    BEGIN {
+      split(ip, o, ".")
+      for (i = 1; i <= 4; i++) {
+        if (o[i] !~ /^[0-9]+$/ || o[i] < 0 || o[i] > 255) exit 1
+      }
+      if (prefix < 1 || prefix > 30) exit 1
+      ipnum = (o[1] * 16777216) + (o[2] * 65536) + (o[3] * 256) + o[4]
+      block = 2 ^ (32 - prefix)
+      network = int(ipnum / block) * block
+      broadcast = network + block - 1
+      if (ipnum == network) ipnum = network + 1
+      if (ipnum == broadcast) exit 1
+      printf "%d.%d.%d.%d", int(ipnum / 16777216) % 256, int(ipnum / 65536) % 256, int(ipnum / 256) % 256, int(ipnum) % 256
+    }
+  '
+}
+
+host_offset_from_cidr_parts() {
+  ip="$1"
+  prefix="$2"
+  awk -v ip="$ip" -v prefix="$prefix" '
+    BEGIN {
+      split(ip, o, ".")
+      for (i = 1; i <= 4; i++) {
+        if (o[i] !~ /^[0-9]+$/ || o[i] < 0 || o[i] > 255) exit 1
+      }
+      if (prefix < 1 || prefix > 30) exit 1
+      ipnum = (o[1] * 16777216) + (o[2] * 65536) + (o[3] * 256) + o[4]
+      block = 2 ^ (32 - prefix)
+      network = int(ipnum / block) * block
+      printf "%d", ipnum - network
+    }
+  '
+}
+
+normalize_gateway_input() {
+  value="$1"
+  selected_netmask="$2"
+  label="$3"
+  case "$value" in
+    */*)
+      valid_cidr "$value" || fail "$label must be a gateway IP or subnet CIDR, for example 10.69.69.0/24."
+      cidr_ip="${value%/*}"
+      cidr_prefix="${value#*/}"
+      normalized_netmask="$(prefix_to_netmask "$cidr_prefix")" || fail "$label CIDR prefix is unsupported."
+      valid_netmask "$normalized_netmask" || fail "$label subnet mask is not supported by this manager."
+      normalized_ip="$(gateway_from_cidr_parts "$cidr_ip" "$cidr_prefix")" || fail "$label CIDR must have a usable gateway address."
+      ;;
+    *)
+      valid_ipv4 "$value" || fail "$label must be a valid gateway IP or subnet CIDR."
+      valid_netmask "$selected_netmask" || fail "Choose a supported subnet mask."
+      cidr_prefix="$(netmask_to_prefix "$selected_netmask")" || fail "Choose a supported subnet mask."
+      normalized_netmask="$selected_netmask"
+      normalized_ip="$(gateway_from_cidr_parts "$value" "$cidr_prefix")" || fail "$label must not be a broadcast address."
+      ;;
+  esac
+  printf '%s|%s' "$normalized_ip" "$normalized_netmask"
+}
+
+reject_gateway_inside_dhcp_pool() {
+  gateway_ip="$1"
+  pool_netmask="$2"
+  pool_start="$3"
+  pool_limit="$4"
+  pool_prefix="$(netmask_to_prefix "$pool_netmask")" || fail "Choose a supported subnet mask."
+  gateway_offset="$(host_offset_from_cidr_parts "$gateway_ip" "$pool_prefix")" || fail "Gateway must be inside the selected subnet."
+  pool_end=$((pool_start + pool_limit - 1))
+  if [ "$gateway_offset" -ge "$pool_start" ] 2>/dev/null && [ "$gateway_offset" -le "$pool_end" ] 2>/dev/null; then
+    fail "Gateway address cannot be inside the DHCP pool. Use the automatic DHCP range or move the first client after the gateway."
+  fi
+}
+
+normalize_dhcp_pool() {
+  gateway_ip="$1"
+  pool_netmask="$2"
+  pool_start_raw="$3"
+  pool_limit_raw="$4"
+  label="$5"
+  pool_prefix="$(netmask_to_prefix "$pool_netmask")" || {
+    printf 'ERR|Choose a supported subnet mask.'
+    return
+  }
+  result="$(awk -v gateway="$gateway_ip" -v prefix="$pool_prefix" -v start="$pool_start_raw" -v limit="$pool_limit_raw" -v label="$label" '
+    function fail(message) {
+      printf "ERR|%s", message
+      exit 0
+    }
+    function ipnum(value, parts, i, num) {
+      split(value, parts, ".")
+      if (length(parts) != 4) return -1
+      for (i = 1; i <= 4; i++) {
+        if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return -1
+      }
+      num = (parts[1] * 16777216) + (parts[2] * 65536) + (parts[3] * 256) + parts[4]
+      return num
+    }
+    function ipstr(num) {
+      return sprintf("%d.%d.%d.%d", int(num / 16777216) % 256, int(num / 65536) % 256, int(num / 256) % 256, int(num) % 256)
+    }
+    BEGIN {
+      if (prefix < 1 || prefix > 30) fail(label " subnet must have usable DHCP addresses.")
+      gateway_num = ipnum(gateway)
+      if (gateway_num < 0) fail(label " gateway must be a valid IPv4 address.")
+      block = 2 ^ (32 - prefix)
+      network = int(gateway_num / block) * block
+      last_usable = block - 2
+      gateway_offset = gateway_num - network
+      if (gateway_offset < 1 || gateway_offset > last_usable) fail(label " gateway must be a usable address.")
+      if (limit !~ /^[0-9]{1,5}$/ || limit < 1) fail(label " DHCP size must be at least 1.")
+      if (start == "" || start == "auto") {
+        if (last_usable >= 200) {
+          start_offset = 50
+          end_offset = 199
+        } else if (last_usable >= 100) {
+          start_offset = 20
+          end_offset = last_usable - 10
+        } else if (last_usable >= 50) {
+          start_offset = 10
+          end_offset = last_usable
+        } else {
+          start_offset = gateway_offset + 1
+          end_offset = last_usable
+        }
+        if (gateway_offset >= start_offset && gateway_offset <= end_offset) start_offset = gateway_offset + 1
+        if (end_offset < start_offset) end_offset = last_usable
+        limit = end_offset - start_offset + 1
+      } else if (start ~ /\./) {
+        start_num = ipnum(start)
+        if (start_num < 0) fail(label " DHCP first client must be a valid IPv4 address.")
+        if (int(start_num / block) * block != network) fail(label " DHCP first client must be inside the selected subnet.")
+        start_offset = start_num - network
+      } else {
+        if (start !~ /^[0-9]{1,5}$/) fail(label " DHCP first client must be an IP address or host number.")
+        start_offset = start + 0
+      }
+      end_offset = start_offset + limit - 1
+      if (start_offset < 1) fail(label " DHCP first client cannot be the network address.")
+      if (start_offset > last_usable) fail(label " DHCP first client is outside the selected subnet.")
+      if (end_offset > last_usable) fail(label " DHCP range reaches the broadcast address; reduce the size.")
+      if (gateway_offset >= start_offset && gateway_offset <= end_offset) fail(label " DHCP range overlaps the gateway. Move the first client after the gateway or use automatic DHCP.")
+      printf "OK|%d|%d|%s|%s", start_offset, limit, ipstr(network + start_offset), ipstr(network + end_offset)
+    }
+  ')"
+  printf '%s' "$result"
+}
+
+interface_label() {
+  case "$1" in
+    lan) printf 'Primary LAN' ;;
+    vlan*) printf 'VLAN %s' "${1#vlan}" ;;
+    wan) printf 'Internet' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+interface_cidr() {
+  iface="$1"
+  ipaddr="$(uci -q get network."$iface".ipaddr 2>/dev/null || true)"
+  netmask="$(uci -q get network."$iface".netmask 2>/dev/null || true)"
+  [ -n "$ipaddr" ] && [ -n "$netmask" ] || return 1
+  prefix="$(netmask_to_prefix "$netmask")" || return 1
+  printf '%s/%s' "$ipaddr" "$prefix"
+}
+
+network_interface_is_lan_like() {
+  iface="$1"
+  case "$iface" in
+    lan|vlan[0-9]*) network_interface_exists "$iface" ;;
+    *) return 1 ;;
+  esac
+}
+
+vlan_is_configured() {
+  vlan="$1"
+  [ "$vlan" = "1" ] && return 0
+  [ "$(uci -q get network.vlan"$vlan" 2>/dev/null)" = "interface" ]
+}
+
+classify_ip_in_cidr() {
+  ip="$1"
+  cidr="$2"
+  gateway="${cidr%/*}"
+  prefix="${cidr#*/}"
+  awk -v ip="$ip" -v gateway="$gateway" -v prefix="$prefix" '
+    function fail(message) {
+      printf "ERR|%s", message
+      exit 0
+    }
+    function ipnum(value, parts, i, num) {
+      split(value, parts, ".")
+      if (length(parts) != 4) return -1
+      for (i = 1; i <= 4; i++) {
+        if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return -1
+      }
+      return (parts[1] * 16777216) + (parts[2] * 65536) + (parts[3] * 256) + parts[4]
+    }
+    function ipstr(num) {
+      return sprintf("%d.%d.%d.%d", int(num / 16777216) % 256, int(num / 65536) % 256, int(num / 256) % 256, int(num) % 256)
+    }
+    BEGIN {
+      if (prefix < 1 || prefix > 30) fail("unsupported subnet")
+      ipn = ipnum(ip)
+      gwn = ipnum(gateway)
+      if (ipn < 0 || gwn < 0) fail("invalid address")
+      block = 2 ^ (32 - prefix)
+      network = int(gwn / block) * block
+      broadcast = network + block - 1
+      if (int(ipn / block) * block != network) {
+        printf "OUT|%s|%s|%s", ipstr(network), ipstr(broadcast), gateway
+      } else if (ipn == network) {
+        printf "NETWORK|%s|%s|%s", ipstr(network), ipstr(broadcast), gateway
+      } else if (ipn == broadcast) {
+        printf "BROADCAST|%s|%s|%s", ipstr(network), ipstr(broadcast), gateway
+      } else if (ipn == gwn) {
+        printf "GATEWAY|%s|%s|%s", ipstr(network), ipstr(broadcast), gateway
+      } else {
+        printf "HOST|%s|%s|%s", ipstr(network), ipstr(broadcast), gateway
+      }
+    }
+  '
+}
+
+classify_ip_on_interface() {
+  ip="$1"
+  iface="$2"
+  cidr="$(interface_cidr "$iface")" || {
+    printf 'ERR|interface has no IPv4 subnet'
+    return
+  }
+  classify_ip_in_cidr "$ip" "$cidr"
+}
+
+require_host_on_interface() {
+  ip="$1"
+  iface="$2"
+  label="$3"
+  network_interface_is_lan_like "$iface" || fail "$label must use Primary LAN or a configured VLAN interface."
+  result="$(classify_ip_on_interface "$ip" "$iface")"
+  status="${result%%|*}"
+  iface_label="$(interface_label "$iface")"
+  case "$status" in
+    HOST) return 0 ;;
+    OUT) fail "$label must be inside $iface_label subnet." ;;
+    NETWORK) fail "$label cannot be the $iface_label network address." ;;
+    BROADCAST) fail "$label cannot be the $iface_label broadcast address." ;;
+    GATEWAY) fail "$label cannot be the $iface_label gateway address." ;;
+    *) fail "$label could not be validated against $iface_label." ;;
+  esac
+}
+
+local_interface_for_ip() {
+  ip="$1"
+  for iface in lan $(uci show network 2>/dev/null | sed -n 's/^network\.\(vlan[0-9][0-9]*\)=interface$/\1/p'); do
+    network_interface_exists "$iface" || continue
+    result="$(classify_ip_on_interface "$ip" "$iface")"
+    status="${result%%|*}"
+    [ "$status" = "HOST" ] || [ "$status" = "GATEWAY" ] || [ "$status" = "NETWORK" ] || [ "$status" = "BROADCAST" ] || continue
+    printf '%s|%s' "$iface" "$status"
+    return 0
+  done
+  return 1
+}
+
+local_host_ip_result() {
+  ip="$1"
+  label="$2"
+  match="$(local_interface_for_ip "$ip")" || {
+    printf 'ERR|%s must be inside a configured LAN or VLAN subnet.' "$label"
+    return
+  }
+  iface="${match%%|*}"
+  status="${match#*|}"
+  iface_label="$(interface_label "$iface")"
+  case "$status" in
+    HOST) printf 'OK|%s' "$iface" ;;
+    NETWORK) printf 'ERR|%s cannot be the %s network address.' "$label" "$iface_label" ;;
+    BROADCAST) printf 'ERR|%s cannot be the %s broadcast address.' "$label" "$iface_label" ;;
+    GATEWAY) printf 'ERR|%s cannot be the %s gateway address.' "$label" "$iface_label" ;;
+    *) printf 'ERR|%s must be a usable host address.' "$label" ;;
+  esac
+}
+
+require_local_host_ip() {
+  result="$(local_host_ip_result "$1" "$2")"
+  status="${result%%|*}"
+  value="${result#*|}"
+  [ "$status" = "OK" ] || fail "$value"
+  printf '%s' "$value"
+}
+
+dhcp_pool_contains_ip() {
+  ip="$1"
+  iface="$2"
+  dhcp_start="$(uci -q get dhcp."$iface".start 2>/dev/null || true)"
+  dhcp_limit="$(uci -q get dhcp."$iface".limit 2>/dev/null || true)"
+  [ -n "$dhcp_start" ] && [ -n "$dhcp_limit" ] || return 1
+  cidr="$(interface_cidr "$iface")" || return 1
+  gateway="${cidr%/*}"
+  prefix="${cidr#*/}"
+  awk -v ip="$ip" -v gateway="$gateway" -v prefix="$prefix" -v start="$dhcp_start" -v limit="$dhcp_limit" '
+    function ipnum(value, parts, i) {
+      split(value, parts, ".")
+      if (length(parts) != 4) return -1
+      for (i = 1; i <= 4; i++) if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return -1
+      return (parts[1] * 16777216) + (parts[2] * 65536) + (parts[3] * 256) + parts[4]
+    }
+    BEGIN {
+      ipn = ipnum(ip); gwn = ipnum(gateway)
+      if (ipn < 0 || gwn < 0 || prefix < 1 || prefix > 30 || start !~ /^[0-9]+$/ || limit !~ /^[0-9]+$/) exit 1
+      block = 2 ^ (32 - prefix)
+      network = int(gwn / block) * block
+      offset = ipn - network
+      end = start + limit - 1
+      exit !(offset >= start && offset <= end)
+    }
+  '
+}
+
+reservation_exists_for_ip() {
+  ip="$1"
+  uci show dhcp 2>/dev/null | grep -Eq "\.ip='$ip'$|\.ip=$ip$"
+}
+
+cidr_overlaps_configured_lan() {
+  route_cidr="$1"
+  awk_script='
+    function ipnum(value, parts, i) {
+      split(value, parts, ".")
+      if (length(parts) != 4) return -1
+      for (i = 1; i <= 4; i++) if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return -1
+      return (parts[1] * 16777216) + (parts[2] * 65536) + (parts[3] * 256) + parts[4]
+    }
+    function bounds(cidr, parts, ip, prefix, block, network) {
+      split(cidr, parts, "/")
+      ip = ipnum(parts[1]); prefix = parts[2] + 0
+      if (ip < 0 || prefix < 1 || prefix > 30) return ""
+      block = 2 ^ (32 - prefix)
+      network = int(ip / block) * block
+      return network "|" (network + block - 1)
+    }
+    BEGIN {
+      rb = bounds(route)
+      split(rb, r, "|")
+      lb = bounds(local)
+      split(lb, l, "|")
+      if (r[1] == "" || l[1] == "") exit 1
+      exit !((r[1] <= l[2]) && (l[1] <= r[2]))
+    }'
+  for iface in lan $(uci show network 2>/dev/null | sed -n 's/^network\.\(vlan[0-9][0-9]*\)=interface$/\1/p'); do
+    local_cidr="$(interface_cidr "$iface" 2>/dev/null)" || continue
+    awk -v route="$route_cidr" -v local="$local_cidr" "$awk_script" && return 0
+  done
+  return 1
+}
+
+cidr_network_address() {
+  cidr="$1"
+  ip="${cidr%/*}"
+  prefix="${cidr#*/}"
+  awk -v ip="$ip" -v prefix="$prefix" '
+    function ipnum(value, parts, i) {
+      split(value, parts, ".")
+      if (length(parts) != 4) return -1
+      for (i = 1; i <= 4; i++) if (parts[i] !~ /^[0-9]+$/ || parts[i] < 0 || parts[i] > 255) return -1
+      return (parts[1] * 16777216) + (parts[2] * 65536) + (parts[3] * 256) + parts[4]
+    }
+    function ipstr(num) {
+      return sprintf("%d.%d.%d.%d", int(num / 16777216) % 256, int(num / 65536) % 256, int(num / 256) % 256, int(num) % 256)
+    }
+    BEGIN {
+      ipn = ipnum(ip)
+      if (ipn < 0 || prefix < 0 || prefix > 32) exit 1
+      if (prefix == 32) {
+        print ip
+        exit 0
+      }
+      block = 2 ^ (32 - prefix)
+      print ipstr(int(ipn / block) * block)
+    }
+  '
+}
+
+source_scope_is_local() {
+  scope="$1"
+  [ -n "$scope" ] || return 0
+  case "$scope" in
+    any|Any|ANY) return 0 ;;
+  esac
+  case "$scope" in
+    */*) cidr_overlaps_configured_lan "$scope" ;;
+    *)
+      match="$(local_interface_for_ip "$scope" 2>/dev/null)" || return 1
+      [ "${match#*|}" = "HOST" ]
+      ;;
+  esac
+}
+
+network_lan_save() {
+  ipaddr="$(param ipaddr)"
+  netmask="$(param netmask)"
+  dhcp_start="$(param dhcp_start)"
+  dhcp_limit="$(param dhcp_limit)"
+  leasetime="$(param leasetime)"
+  normalized_lan="$(normalize_gateway_input "$ipaddr" "$netmask" "Primary LAN")"
+  ipaddr="${normalized_lan%%|*}"
+  netmask="${normalized_lan#*|}"
+  valid_leasetime "$leasetime" || fail "Lease time must look like 12h or 30m."
+  normalized_pool="$(normalize_dhcp_pool "$ipaddr" "$netmask" "$dhcp_start" "$dhcp_limit" "Primary LAN")"
+  old_ifs="$IFS"
+  IFS='|'
+  set -- $normalized_pool
+  IFS="$old_ifs"
+  [ "$1" = "OK" ] || fail "${2:-DHCP range is invalid.}"
+  dhcp_start="$2"
+  dhcp_limit="$3"
+  dhcp_start_ip="$4"
+  dhcp_end_ip="$5"
+
+  backup="$(network_backup)" || fail "Could not create network backup."
+  current_device="$(uci -q get network.lan.device 2>/dev/null || printf br-lan)"
+  uci set network.lan='interface'
+  uci set network.lan.proto='static'
+  uci set network.lan.device="$current_device"
+  uci set network.lan.ipaddr="$ipaddr"
+  uci set network.lan.netmask="$netmask"
+  uci -q delete network.lan.ip6assign
+
+  uci set dhcp.lan='dhcp'
+  uci set dhcp.lan.interface='lan'
+  uci set dhcp.lan.ignore='0'
+  uci set dhcp.lan.dhcpv4='server'
+  uci set dhcp.lan.start="$dhcp_start"
+  uci set dhcp.lan.limit="$dhcp_limit"
+  uci set dhcp.lan.leasetime="$leasetime"
+  uci set dhcp.lan.dhcpv6='disabled'
+  uci set dhcp.lan.ra='disabled'
+  uci -q delete dhcp.lan.ra_flags
+
+  uci -q delete uhttpd.main.listen_http
+  uci -q add_list uhttpd.main.listen_http="$ipaddr:80"
+  uci -q delete uhttpd.main.listen_https
+  uci -q add_list uhttpd.main.listen_https="$ipaddr:443"
+  uci -q set uhttpd.main.redirect_https='1'
+  refresh_dnsmasq_interfaces
+
+  uci commit network || fail "Could not save network settings."
+  uci commit dhcp || fail "Could not save DHCP settings."
+  uci commit uhttpd || true
+  plain
+  printf 'saved=primary_lan\n'
+  printf 'backup=%s\n' "$backup"
+  printf 'router_ip=%s\n' "$ipaddr"
+  printf 'dhcp_start=%s\n' "$dhcp_start_ip"
+  printf 'dhcp_end=%s\n' "$dhcp_end_ip"
+  printf 'next_url=https://%s/mx65/\n' "$ipaddr"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+ports_from_param() {
+  printf '%s' "$(param ports)" | tr ',;' '  '
+}
+
+network_vlan_save() {
+  vlan="$(param vlan_id)"
+  label="$(clean_network_label label)"
+  ipaddr="$(param ipaddr)"
+  netmask="$(param netmask)"
+  dhcp_start="$(param dhcp_start)"
+  dhcp_limit="$(param dhcp_limit)"
+  leasetime="$(param leasetime)"
+  ports="$(ports_from_param)"
+  valid_vlan_id "$vlan" || fail "VLAN ID must be 2-4094."
+  normalized_vlan="$(normalize_gateway_input "$ipaddr" "$netmask" "VLAN gateway")"
+  ipaddr="${normalized_vlan%%|*}"
+  netmask="${normalized_vlan#*|}"
+  valid_leasetime "$leasetime" || fail "Lease time must look like 12h or 30m."
+  normalized_pool="$(normalize_dhcp_pool "$ipaddr" "$netmask" "$dhcp_start" "$dhcp_limit" "VLAN")"
+  old_ifs="$IFS"
+  IFS='|'
+  set -- $normalized_pool
+  IFS="$old_ifs"
+  [ "$1" = "OK" ] || fail "${2:-DHCP range is invalid.}"
+  dhcp_start="$2"
+  dhcp_limit="$3"
+  dhcp_start_ip="$4"
+  dhcp_end_ip="$5"
+  for port in $ports; do
+    valid_lan_port "$port" || fail "VLAN access ports must be active LAN ports on this appliance."
+  done
+
+  backup="$(network_backup)" || fail "Could not create network backup."
+  ifname="vlan$vlan"
+  bridge_name="mx65_vlan$vlan"
+  ensure_br_lan_vlan_filtering
+
+  uci set network.lan.device='br-lan.1'
+  native="$(bridge_vlan_by_id 1)"
+  [ -n "$native" ] || {
+    uci set network.mx65_native='bridge-vlan'
+    uci set network.mx65_native.device='br-lan'
+    uci set network.mx65_native.vlan='1'
+  }
+
+  uci set network."$bridge_name"='bridge-vlan'
+  uci set network."$bridge_name".device='br-lan'
+  uci set network."$bridge_name".vlan="$vlan"
+  uci -q delete network."$bridge_name".ports
+  for port in $ports; do
+    uci add_list network."$bridge_name".ports="$port:u*"
+  done
+  rebuild_native_vlan_ports
+
+  uci set network."$ifname"='interface'
+  uci set network."$ifname".proto='static'
+  uci set network."$ifname".device="br-lan.$vlan"
+  uci set network."$ifname".ipaddr="$ipaddr"
+  uci set network."$ifname".netmask="$netmask"
+  [ -n "$label" ] && uci set network."$ifname".label="$label" || uci -q delete network."$ifname".label
+
+  uci set dhcp."$ifname"='dhcp'
+  uci set dhcp."$ifname".interface="$ifname"
+  uci set dhcp."$ifname".ignore='0'
+  uci set dhcp."$ifname".dhcpv4='server'
+  uci set dhcp."$ifname".start="$dhcp_start"
+  uci set dhcp."$ifname".limit="$dhcp_limit"
+  uci set dhcp."$ifname".leasetime="$leasetime"
+  uci set dhcp."$ifname".dhcpv6='disabled'
+  uci set dhcp."$ifname".ra='disabled'
+  uci -q delete dhcp."$ifname".ra_flags
+  refresh_dnsmasq_interfaces
+
+  lan_zone="$(zone_path_by_name lan)"
+  if [ -n "$lan_zone" ]; then
+    uci -q del_list "$lan_zone.network=$ifname" 2>/dev/null || true
+    uci add_list "$lan_zone.network=$ifname"
+  fi
+
+  uci commit network || fail "Could not save VLAN network settings."
+  uci commit dhcp || fail "Could not save VLAN DHCP settings."
+  uci commit firewall || fail "Could not save VLAN firewall settings."
+  if ! fw4 check >/tmp/mx65-fw4-vlan.$$ 2>&1; then
+    restore_network_backup "$backup" >/dev/null 2>&1 || true
+    fail "Firewall check failed; restored the previous network settings."
+  fi
+  rm -f /tmp/mx65-fw4-vlan.$$
+  plain
+  printf 'saved=vlan\n'
+  printf 'vlan_id=%s\n' "$vlan"
+  printf 'network=%s\n' "$ifname"
+  printf 'gateway=%s\n' "$ipaddr"
+  printf 'dhcp_start=%s\n' "$dhcp_start_ip"
+  printf 'dhcp_end=%s\n' "$dhcp_end_ip"
+  printf 'ports=%s\n' "$ports"
+  printf 'backup=%s\n' "$backup"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+network_vlan_delete() {
+  vlan="$(param vlan_id)"
+  valid_vlan_id "$vlan" || fail "VLAN ID must be 2-4094."
+  backup="$(network_backup)" || fail "Could not create network backup."
+  ifname="vlan$vlan"
+  bridge_name="mx65_vlan$vlan"
+  uci -q delete network."$ifname"
+  uci -q delete network."$bridge_name"
+  uci -q delete dhcp."$ifname"
+  lan_zone="$(zone_path_by_name lan)"
+  [ -z "$lan_zone" ] || uci -q del_list "$lan_zone.network=$ifname" 2>/dev/null || true
+  rebuild_native_vlan_ports
+  refresh_dnsmasq_interfaces
+  uci commit network || fail "Could not delete VLAN network."
+  uci commit dhcp || fail "Could not delete VLAN DHCP."
+  uci commit firewall || fail "Could not update firewall zone."
+  if ! fw4 check >/tmp/mx65-fw4-vlan-delete.$$ 2>&1; then
+    restore_network_backup "$backup" >/dev/null 2>&1 || true
+    fail "Firewall check failed; restored the previous network settings."
+  fi
+  rm -f /tmp/mx65-fw4-vlan-delete.$$
+  plain
+  printf 'deleted=vlan\n'
+  printf 'vlan_id=%s\n' "$vlan"
+  printf 'backup=%s\n' "$backup"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+prefix_to_netmask() {
+  case "$1" in
+    8) printf '255.0.0.0' ;;
+    9) printf '255.128.0.0' ;;
+    10) printf '255.192.0.0' ;;
+    11) printf '255.224.0.0' ;;
+    12) printf '255.240.0.0' ;;
+    13) printf '255.248.0.0' ;;
+    14) printf '255.252.0.0' ;;
+    15) printf '255.254.0.0' ;;
+    16) printf '255.255.0.0' ;;
+    17) printf '255.255.128.0' ;;
+    18) printf '255.255.192.0' ;;
+    19) printf '255.255.224.0' ;;
+    20) printf '255.255.240.0' ;;
+    21) printf '255.255.248.0' ;;
+    22) printf '255.255.252.0' ;;
+    23) printf '255.255.254.0' ;;
+    24) printf '255.255.255.0' ;;
+    25) printf '255.255.255.128' ;;
+    26) printf '255.255.255.192' ;;
+    27) printf '255.255.255.224' ;;
+    28) printf '255.255.255.240' ;;
+    29) printf '255.255.255.248' ;;
+    30) printf '255.255.255.252' ;;
+    31) printf '255.255.255.254' ;;
+    32) printf '255.255.255.255' ;;
+    *) return 1 ;;
+  esac
+}
+
+route_save() {
+  id="$(param id)"
+  name="$(clean_network_label name)"
+  subnet="$(param subnet)"
+  gateway="$(param gateway)"
+  iface="$(param interface)"
+  enabled="$(param enabled)"
+  [ -n "$name" ] || name="Static route"
+  valid_cidr "$subnet" || fail "Subnet must be CIDR, for example 10.99.0.0/24."
+  valid_ipv4 "$gateway" || fail "Gateway IP must be a valid IPv4 address."
+  printf '%s' "$iface" | grep -Eq '^(lan|vlan[0-9]{1,4})$' || fail "Static routes must use Primary LAN or a configured VLAN interface."
+  network_interface_is_lan_like "$iface" || fail "Route interface is not configured on this MX."
+  case "$enabled" in
+    0|1|"") ;;
+    *) fail "Enabled must be on or off." ;;
+  esac
+  [ -n "$enabled" ] || enabled="1"
+  if [ -z "$id" ]; then
+    id="mx65_route_$(date +%s)"
+  fi
+  valid_route_ref "$id" || fail "Static route ID is invalid."
+  existing_type="$(uci -q get network."$id" 2>/dev/null || true)"
+  [ -z "$existing_type" ] || [ "$existing_type" = "route" ] || fail "Static route ID points to a non-route setting."
+  target="${subnet%/*}"
+  prefix="${subnet#*/}"
+  network_target="$(cidr_network_address "$subnet")" || fail "Subnet must be a valid network CIDR."
+  [ "$target" = "$network_target" ] || fail "Static route subnet must be the network address. Use $network_target/$prefix."
+  cidr_overlaps_configured_lan "$subnet" && fail "Static route subnet overlaps a directly connected LAN or VLAN. Connected networks do not need static routes."
+  require_host_on_interface "$gateway" "$iface" "Next hop IP"
+  netmask="$(prefix_to_netmask "$prefix")" || fail "Unsupported route prefix."
+  backup="$(network_backup)" || fail "Could not create network backup."
+  uci set network."$id"='route'
+  uci set network."$id".name="$name"
+  uci set network."$id".interface="$iface"
+  uci set network."$id".target="$target"
+  uci set network."$id".netmask="$netmask"
+  uci set network."$id".gateway="$gateway"
+  if [ "$enabled" = "1" ]; then
+    uci -q delete network."$id".disabled
+  else
+    uci set network."$id".disabled='1'
+  fi
+  uci commit network || fail "Could not save static route."
+  plain
+  printf 'saved=static_route\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+route_delete() {
+  id="$(param id)"
+  valid_route_ref "$id" || fail "Choose a valid static route."
+  [ "$(uci -q get network."$id" 2>/dev/null)" = "route" ] || fail "Static route was not found."
+  backup="$(network_backup)" || fail "Could not create network backup."
+  uci -q delete network."$id"
+  uci commit network || fail "Could not delete static route."
+  plain
+  printf 'deleted=static_route\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+reservation_id_for_mac() {
+  printf 'mx65_res_%s' "$(printf '%s' "$1" | tr -d ':')"
+}
+
+reservation_save() {
+  mac="$(param mac | tr 'A-F' 'a-f')"
+  ipaddr="$(param ipaddr)"
+  hostname="$(clean_network_label hostname)"
+  leasetime="$(param leasetime)"
+  valid_mac "$mac" || fail "Reservation needs a valid MAC address."
+  valid_ipv4 "$ipaddr" || fail "Reservation needs a valid IPv4 address."
+  reservation_result="$(local_host_ip_result "$ipaddr" "Fixed IP assignment")"
+  [ "${reservation_result%%|*}" = "OK" ] || fail "${reservation_result#*|}"
+  reservation_iface="${reservation_result#*|}"
+  if dhcp_pool_contains_ip "$ipaddr" "$reservation_iface"; then
+    fail "Fixed IP assignment is inside the dynamic DHCP pool. Use the reserved space outside the client pool."
+  fi
+  [ -n "$hostname" ] || hostname="reserved-device"
+  if [ -n "$leasetime" ]; then
+    valid_leasetime "$leasetime" || fail "Lease time must look like 12h or 30m."
+  fi
+  id="$(reservation_id_for_mac "$mac")"
+  backup="$(network_backup)" || fail "Could not create DHCP backup."
+  uci set dhcp."$id"='host'
+  uci set dhcp."$id".name="$hostname"
+  uci set dhcp."$id".mac="$mac"
+  uci set dhcp."$id".ip="$ipaddr"
+  if [ -n "$leasetime" ]; then
+    uci set dhcp."$id".leasetime="$leasetime"
+  else
+    uci -q delete dhcp."$id".leasetime
+  fi
+  uci commit dhcp || fail "Could not save DHCP reservation."
+  /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+  plain
+  printf 'saved=reservation\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+}
+
+reservation_delete() {
+  mac="$(param mac | tr 'A-F' 'a-f')"
+  valid_mac "$mac" || fail "Choose a valid reservation MAC address."
+  id="$(reservation_id_for_mac "$mac")"
+  [ "$(uci -q get dhcp."$id" 2>/dev/null)" = "host" ] || fail "Reservation was not found."
+  backup="$(network_backup)" || fail "Could not create DHCP backup."
+  uci -q delete dhcp."$id"
+  uci commit dhcp || fail "Could not delete DHCP reservation."
+  /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+  plain
+  printf 'deleted=reservation\n'
+  printf 'mac=%s\n' "$mac"
+  printf 'backup=%s\n' "$backup"
+}
+
+bridge_vlan_ensure() {
+  vlan="$1"
+  existing="$(bridge_vlan_by_id "$vlan")"
+  if [ -n "$existing" ]; then
+    printf '%s' "$existing"
+    return
+  fi
+  if [ "$vlan" = "1" ]; then
+    section_name="mx65_native"
+  else
+    section_name="mx65_vlan$vlan"
+  fi
+  uci set network."$section_name"='bridge-vlan'
+  uci set network."$section_name".device='br-lan'
+  uci set network."$section_name".vlan="$vlan"
+  printf 'network.%s' "$section_name"
+}
+
+remove_port_from_bridge_vlans() {
+  port="$1"
+  uci show network 2>/dev/null | sed -n 's/^\(network\.[^=]*\)=bridge-vlan$/\1/p' | while read -r section_path; do
+    old="$(uci -q get "$section_path.ports" 2>/dev/null || true)"
+    uci -q delete "$section_path.ports"
+    for item in $old; do
+      case "$item" in
+        "$port"|"$port":*) continue ;;
+      esac
+      uci add_list "$section_path.ports=$item"
+    done
+  done
+}
+
+add_port_to_vlan() {
+  vlan="$1"
+  port="$2"
+  mode="$3"
+  section_path="$(bridge_vlan_ensure "$vlan")"
+  uci -q del_list "$section_path.ports=$port" 2>/dev/null || true
+  uci -q del_list "$section_path.ports=$port:u*" 2>/dev/null || true
+  uci -q del_list "$section_path.ports=$port:t" 2>/dev/null || true
+  case "$mode" in
+    native) uci add_list "$section_path.ports=$port:u*" ;;
+    tagged) uci add_list "$section_path.ports=$port:t" ;;
+  esac
+}
+
+port_vlan_save() {
+  port="$(param port)"
+  mode="$(param mode)"
+  access_vlan="$(param access_vlan)"
+  native_vlan="$(param native_vlan)"
+  allowed_vlans="$(param allowed_vlans)"
+  valid_lan_port "$port" || fail "Choose an active LAN port on this appliance."
+  case "$mode" in
+    access|trunk) ;;
+    *) fail "Port type must be Access or Trunk." ;;
+  esac
+  backup="$(network_backup)" || fail "Could not create network backup."
+  ensure_br_lan_vlan_filtering
+  remove_port_from_bridge_vlans "$port"
+  if [ "$mode" = "access" ]; then
+    valid_vlan_any "$access_vlan" || fail "Access VLAN must be 1-4094."
+    vlan_is_configured "$access_vlan" || fail "Access VLAN must already exist in Addressing & VLANs."
+    add_port_to_vlan "$access_vlan" "$port" native
+  else
+    valid_vlan_any "$native_vlan" || fail "Native VLAN must be 1-4094."
+    vlan_is_configured "$native_vlan" || fail "Native VLAN must already exist in Addressing & VLANs."
+    [ -n "$allowed_vlans" ] || allowed_vlans="$native_vlan"
+    valid_vlan_list "$allowed_vlans" || fail "Allowed VLANs must be comma-separated VLAN IDs."
+    printf ',%s,' "$allowed_vlans" | grep -q ",$native_vlan," || fail "Allowed VLANs must include the native VLAN."
+    for vlan in $(printf '%s' "$allowed_vlans" | tr ',' ' '); do
+      vlan_is_configured "$vlan" || fail "Allowed VLAN $vlan is not configured in Addressing & VLANs."
+    done
+    add_port_to_vlan "$native_vlan" "$port" native
+    for vlan in $(printf '%s' "$allowed_vlans" | tr ',' ' '); do
+      [ "$vlan" = "$native_vlan" ] && continue
+      add_port_to_vlan "$vlan" "$port" tagged
+    done
+  fi
+  uci set network.lan.device='br-lan.1'
+  uci commit network || fail "Could not save port VLAN settings."
+  plain
+  printf 'saved=port_vlan\n'
+  printf 'port=%s\n' "$port"
+  printf 'mode=%s\n' "$mode"
+  printf 'backup=%s\n' "$backup"
+  printf 'reload=scheduled\n'
+  schedule_network_reload
+}
+
+firewall_backup() {
+  mkdir -p /etc/mx65-manager/backups
+  backup="/etc/mx65-manager/backups/firewall-config-$(date +%Y%m%d-%H%M%S).uci"
+  uci export firewall > "$backup" || return 1
+  chmod 600 "$backup" 2>/dev/null || true
+  printf '%s' "$backup"
+}
+
+valid_firewall_rule_id() {
+  printf '%s' "$1" | grep -Eq '^mx65_l3_[0-9A-Za-z_]+$'
+}
+
+outbound_rule_save() {
+  id="$(param id)"
+  comment="$(clean_note_value comment)"
+  policy="$(param policy)"
+  protocol="$(param protocol)"
+  src_cidr="$(param src_cidr)"
+  dest_cidr="$(param dest_cidr)"
+  dest_port="$(param dest_port)"
+  enabled="$(param enabled)"
+  [ -n "$comment" ] || comment="Outbound firewall rule"
+  case "$policy" in
+    allow|deny) ;;
+    *) fail "Policy must be Allow or Deny." ;;
+  esac
+  case "$protocol" in
+    any|tcp|udp|icmp) ;;
+    *) fail "Protocol must be Any, TCP, UDP, or ICMP." ;;
+  esac
+  valid_optional_cidr_or_any "$src_cidr" || fail "Source must be Any, an IPv4 address, or a CIDR subnet."
+  valid_optional_cidr_or_any "$dest_cidr" || fail "Destination must be Any, an IPv4 address, or a CIDR subnet."
+  source_scope_is_local "$src_cidr" || fail "Source must be Any or a configured LAN/VLAN subnet or host."
+  if [ -n "$dest_port" ] && [ "$dest_port" != "any" ] && [ "$dest_port" != "Any" ]; then
+    valid_port_spec "$dest_port" || fail "Destination port must be Any, a port, or a port range."
+  fi
+  if [ "$protocol" = "icmp" ] && [ -n "$dest_port" ] && [ "$dest_port" != "any" ] && [ "$dest_port" != "Any" ]; then
+    fail "ICMP rules cannot use destination ports."
+  fi
+  case "$enabled" in
+    0|1|"") ;;
+    *) fail "Enabled must be on or off." ;;
+  esac
+  [ -n "$enabled" ] || enabled="1"
+  if [ -z "$id" ]; then
+    id="mx65_l3_$(date +%s)"
+  fi
+  valid_firewall_rule_id "$id" || fail "Outbound rule ID is invalid."
+  backup="$(firewall_backup)" || fail "Could not create firewall backup."
+  uci set firewall."$id"='rule'
+  uci set firewall."$id".name="$comment"
+  uci set firewall."$id".src='lan'
+  uci set firewall."$id".dest='wan'
+  if [ "$protocol" = "any" ] && [ -n "$dest_port" ] && [ "$dest_port" != "any" ] && [ "$dest_port" != "Any" ]; then
+    uci set firewall."$id".proto='tcp udp'
+  elif [ "$protocol" = "any" ]; then
+    uci set firewall."$id".proto='all'
+  else
+    uci set firewall."$id".proto="$protocol"
+  fi
+  if [ -n "$src_cidr" ] && [ "$src_cidr" != "any" ] && [ "$src_cidr" != "Any" ]; then
+    uci set firewall."$id".src_ip="$src_cidr"
+  else
+    uci -q delete firewall."$id".src_ip
+  fi
+  if [ -n "$dest_cidr" ] && [ "$dest_cidr" != "any" ] && [ "$dest_cidr" != "Any" ]; then
+    uci set firewall."$id".dest_ip="$dest_cidr"
+  else
+    uci -q delete firewall."$id".dest_ip
+  fi
+  if [ -n "$dest_port" ] && [ "$dest_port" != "any" ] && [ "$dest_port" != "Any" ]; then
+    uci set firewall."$id".dest_port="$dest_port"
+  else
+    uci -q delete firewall."$id".dest_port
+  fi
+  if [ "$policy" = "allow" ]; then
+    uci set firewall."$id".target='ACCEPT'
+  else
+    uci set firewall."$id".target='REJECT'
+  fi
+  uci set firewall."$id".enabled="$enabled"
+  uci commit firewall || fail "Could not save outbound firewall rule."
+  if ! fw4 check >/tmp/mx65-fw4-l3.$$ 2>&1; then
+    uci import firewall < "$backup" 2>/dev/null || true
+    uci commit firewall
+    fail "Firewall check failed; restored the previous outbound rules."
+  fi
+  rm -f /tmp/mx65-fw4-l3.$$
+  /etc/init.d/firewall reload >/dev/null 2>&1 || true
+  plain
+  printf 'saved=outbound_rule\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+}
+
+outbound_rule_delete() {
+  id="$(param id)"
+  valid_firewall_rule_id "$id" || fail "Choose a valid outbound rule."
+  [ "$(uci -q get firewall."$id" 2>/dev/null)" = "rule" ] || fail "Outbound rule was not found."
+  backup="$(firewall_backup)" || fail "Could not create firewall backup."
+  uci -q delete firewall."$id"
+  uci commit firewall || fail "Could not delete outbound firewall rule."
+  if ! fw4 check >/tmp/mx65-fw4-l3-delete.$$ 2>&1; then
+    uci import firewall < "$backup" 2>/dev/null || true
+    uci commit firewall
+    fail "Firewall check failed; restored the previous outbound rules."
+  fi
+  rm -f /tmp/mx65-fw4-l3-delete.$$
+  /etc/init.d/firewall reload >/dev/null 2>&1 || true
+  plain
+  printf 'deleted=outbound_rule\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+}
+
+valid_forward_id() {
+  printf '%s' "$1" | grep -Eq '^mx65_pf_[0-9A-Za-z_]+$'
+}
+
+port_forward_save() {
+  id="$(param id)"
+  description="$(clean_note_value description)"
+  protocol="$(param protocol)"
+  public_port="$(param public_port)"
+  lan_ip="$(param lan_ip)"
+  local_port="$(param local_port)"
+  allowed_ips="$(param allowed_ips)"
+  enabled="$(param enabled)"
+  [ -n "$description" ] || description="Port forwarding rule"
+  case "$protocol" in
+    tcp|udp|tcpudp) ;;
+    *) fail "Protocol must be TCP, UDP, or TCP/UDP." ;;
+  esac
+  valid_port_spec "$public_port" || fail "Public port must be a port or port range."
+  valid_ipv4 "$lan_ip" || fail "LAN IP must be a valid local IPv4 address."
+  valid_port_spec "$local_port" || fail "Local port must be a port or port range."
+  [ "$(port_span "$public_port")" = "$(port_span "$local_port")" ] || fail "Public and local port ranges must have the same size."
+  forward_result="$(local_host_ip_result "$lan_ip" "Forwarding LAN IP")"
+  [ "${forward_result%%|*}" = "OK" ] || fail "${forward_result#*|}"
+  forward_iface="${forward_result#*|}"
+  if dhcp_pool_contains_ip "$lan_ip" "$forward_iface" && ! reservation_exists_for_ip "$lan_ip"; then
+    fail "Forwarding LAN IP is inside the dynamic DHCP pool. Add a fixed IP assignment first or use reserved address space."
+  fi
+  valid_remote_ip_list "$allowed_ips" || fail "Allowed remote IPs must be Any, blank, or comma-separated CIDR ranges."
+  case "$enabled" in
+    0|1|"") ;;
+    *) fail "Enabled must be on or off." ;;
+  esac
+  [ -n "$enabled" ] || enabled="1"
+  if [ -z "$id" ]; then
+    id="mx65_pf_$(date +%s)"
+  fi
+  valid_forward_id "$id" || fail "Forwarding rule ID is invalid."
+
+  backup="$(firewall_backup)" || fail "Could not create firewall backup."
+  uci set firewall."$id"='redirect'
+  uci set firewall."$id".name="$description"
+  uci set firewall."$id".src='wan'
+  uci set firewall."$id".dest='lan'
+  if [ "$protocol" = "tcpudp" ]; then
+    uci set firewall."$id".proto='tcp udp'
+  else
+    uci set firewall."$id".proto="$protocol"
+  fi
+  uci set firewall."$id".src_dport="$public_port"
+  uci set firewall."$id".dest_ip="$lan_ip"
+  uci set firewall."$id".dest_port="$local_port"
+  uci set firewall."$id".target='DNAT'
+  uci set firewall."$id".enabled="$enabled"
+  if [ -n "$allowed_ips" ] && [ "$allowed_ips" != "any" ] && [ "$allowed_ips" != "Any" ] && [ "$allowed_ips" != "ANY" ]; then
+    uci set firewall."$id".src_ip="$allowed_ips"
+  else
+    uci -q delete firewall."$id".src_ip
+  fi
+  uci commit firewall || fail "Could not save forwarding rule."
+  if ! fw4 check >/tmp/mx65-fw4-forward.$$ 2>&1; then
+    uci import firewall < "$backup" 2>/dev/null || true
+    uci commit firewall
+    fail "Firewall check failed; restored the previous forwarding rules."
+  fi
+  rm -f /tmp/mx65-fw4-forward.$$
+  /etc/init.d/firewall reload >/dev/null 2>&1 || true
+  plain
+  printf 'saved=port_forward\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+}
+
+port_forward_delete() {
+  id="$(param id)"
+  valid_forward_id "$id" || fail "Choose a valid forwarding rule."
+  uci -q get firewall."$id" >/dev/null 2>&1 || fail "Forwarding rule was not found."
+  backup="$(firewall_backup)" || fail "Could not create firewall backup."
+  uci -q delete firewall."$id"
+  uci commit firewall || fail "Could not delete forwarding rule."
+  if ! fw4 check >/tmp/mx65-fw4-forward-delete.$$ 2>&1; then
+    uci import firewall < "$backup" 2>/dev/null || true
+    uci commit firewall
+    fail "Firewall check failed; restored the previous forwarding rules."
+  fi
+  rm -f /tmp/mx65-fw4-forward-delete.$$
+  /etc/init.d/firewall reload >/dev/null 2>&1 || true
+  plain
+  printf 'deleted=port_forward\n'
+  printf 'id=%s\n' "$id"
+  printf 'backup=%s\n' "$backup"
+}
+
+device_note_save() {
+  mac="$(param mac | tr 'A-F' 'a-f')"
+  valid_mac "$mac" || fail "Device note requires a valid MAC address."
+  label="$(clean_note_value label)"
+  model="$(clean_note_value model)"
+  serial="$(clean_note_value serial)"
+  role="$(clean_note_value role)"
+  expected="$(param expected)"
+  case "$expected" in
+    auto|dhcp|reserved|manual|"") ;;
+    *) fail "Expected address mode must be auto, dhcp, reserved, or manual." ;;
+  esac
+  [ -n "$expected" ] || expected="auto"
+  mkdir -p /etc/mx65-manager
+  tmp="/tmp/mx65-device-notes.$$"
+  if [ -f "$DEVICE_NOTES_FILE" ]; then
+    grep -vi "^$mac|" "$DEVICE_NOTES_FILE" > "$tmp" 2>/dev/null || true
+  fi
+  printf '%s|%s|%s|%s|%s|%s\n' "$mac" "$label" "$model" "$serial" "$role" "$expected" >> "$tmp"
+  mv "$tmp" "$DEVICE_NOTES_FILE" || fail "Could not save device note."
+  chmod 600 "$DEVICE_NOTES_FILE" 2>/dev/null || true
+  plain
+  printf 'saved=%s\n' "$mac"
+}
+
+port_note_save() {
+  port="$(param port)"
+  valid_port "$port" || fail "Choose a valid My-Rack-E appliance port."
+  label="$(clean_note_value label)"
+  purpose="$(clean_note_value purpose)"
+  mkdir -p /etc/mx65-manager
+  tmp="/tmp/mx65-port-notes.$$"
+  if [ -f "$PORT_NOTES_FILE" ]; then
+    grep -v "^$port|" "$PORT_NOTES_FILE" > "$tmp" 2>/dev/null || true
+  fi
+  printf '%s|%s|%s\n' "$port" "$label" "$purpose" >> "$tmp"
+  mv "$tmp" "$PORT_NOTES_FILE" || fail "Could not save port label."
+  chmod 600 "$PORT_NOTES_FILE" 2>/dev/null || true
+  plain
+  printf 'saved=%s\n' "$port"
+}
+
+active_lan_count() {
+  count=0
+  for port in $(list_lan_ports); do
+    ip link show "$port" 2>/dev/null | grep -q 'LOWER_UP' && count=$((count + 1))
+  done
+  printf '%s' "$count"
+}
+
+port_action() {
+  port="$(param port)"
+  action="$(param action)"
+  valid_port "$port" || fail "Choose a valid My-Rack-E appliance port."
+  [ -d "/sys/class/net/$port" ] || fail "$port is not present on this router."
+  case "$action" in
+    enable) ;;
+    disable) ;;
+    *) fail "Unsupported port action." ;;
+  esac
+  if [ "$action" = "disable" ]; then
+    case "$port" in
+      lan*)
+        if ip link show "$port" 2>/dev/null | grep -q 'LOWER_UP' && [ "$(active_lan_count)" -le 1 ]; then
+          fail "Refusing to disable the only active LAN port."
+        fi
+        ;;
+    esac
+    output="$(ip link set "$port" down 2>&1)" || fail "Could not disable $port. $output"
+  else
+    output="$(ip link set "$port" up 2>&1)" || fail "Could not enable $port. $output"
+  fi
+  plain
+  printf '%s %s\n' "$port" "$action"
+}
+
+port_stats_report() {
+  for port in $(list_ports); do
+    [ -d "/sys/class/net/$port" ] || continue
+    stats="/sys/class/net/$port/statistics"
+    printf '%s rx_bytes=%s tx_bytes=%s rx_packets=%s tx_packets=%s rx_errors=%s tx_errors=%s carrier=%s operstate=%s\n' \
+      "$port" \
+      "$(cat "$stats/rx_bytes" 2>/dev/null || printf 0)" \
+      "$(cat "$stats/tx_bytes" 2>/dev/null || printf 0)" \
+      "$(cat "$stats/rx_packets" 2>/dev/null || printf 0)" \
+      "$(cat "$stats/tx_packets" 2>/dev/null || printf 0)" \
+      "$(cat "$stats/rx_errors" 2>/dev/null || printf 0)" \
+      "$(cat "$stats/tx_errors" 2>/dev/null || printf 0)" \
+      "$(cat "/sys/class/net/$port/carrier" 2>/dev/null || printf 0)" \
+      "$(cat "/sys/class/net/$port/operstate" 2>/dev/null || printf unknown)"
+  done
+}
+
+diag() {
+  kind="$(param kind)"
+  target="$(param target)"
+  case "$kind" in
+    ping)
+      valid_target "$target" || fail "Diagnostic target must be a hostname or IP address."
+      plain
+      ping -c 4 "$target" 2>&1
+      ;;
+    nslookup)
+      valid_target "$target" || fail "Diagnostic target must be a hostname or IP address."
+      plain
+      nslookup "$target" 2>&1
+      ;;
+    routes)
+      plain
+      ip route show 2>&1
+      ;;
+    firewall-check)
+      plain
+      fw4 check 2>&1
+      ;;
+    logs)
+      plain
+      logread -l 200 2>/dev/null || dmesg | tail -200 2>&1
+      ;;
+    *)
+      fail "Unsupported diagnostic."
+      ;;
+  esac
+}
+
+snapshot() {
+  plain
+  section release
+  cat /etc/openwrt_release 2>/dev/null || true
+  section board
+  ubus call system board 2>/dev/null || true
+  section uptime
+  uptime 2>/dev/null || true
+  section memory
+  free -h 2>/dev/null || cat /proc/meminfo 2>/dev/null || true
+  section storage
+  df -h 2>/dev/null || true
+  section ip_brief
+  ip -brief addr 2>/dev/null || ip addr show 2>/dev/null || true
+  section routes
+  ip route show 2>/dev/null || true
+  section traffic_shaping
+  printf 'qdisc\n'
+  tc qdisc show 2>/dev/null || true
+  printf '\npackages\n'
+  opkg list-installed 2>/dev/null | grep -E '^(sqm-scripts|luci-app-sqm|tc|kmod-sched|iptables-mod-ipopt)' || true
+  section lan
+  ifstatus lan 2>/dev/null || true
+  section wan
+  ifstatus wan 2>/dev/null || true
+  section uci_network
+  uci show network 2>/dev/null || true
+  section uci_dhcp
+  uci show dhcp 2>/dev/null || true
+  section uci_firewall
+  uci show firewall 2>/dev/null || true
+  section leases
+  cat /tmp/dhcp.leases 2>/dev/null || true
+  section neighbors
+  ip neigh show 2>/dev/null || true
+  section arp
+  cat /proc/net/arp 2>/dev/null || true
+  section fdb
+  bridge fdb show 2>/dev/null || brctl showmacs br-lan 2>/dev/null || true
+  section stp
+  brctl showstp br-lan 2>/dev/null || true
+  section port_stats
+  port_stats_report
+  section device_notes
+  cat "$DEVICE_NOTES_FILE" 2>/dev/null || true
+  section port_notes
+  cat "$PORT_NOTES_FILE" 2>/dev/null || true
+  section services
+  for s in dnsmasq odhcpd firewall network dropbear cloudflared; do
+    [ -x "/etc/init.d/$s" ] || continue
+    printf '%s ' "$s"
+    /etc/init.d/"$s" enabled >/dev/null 2>&1 && printf enabled || printf disabled
+    printf ' '
+    /etc/init.d/"$s" status 2>/dev/null || true
+  done
+  section access
+  printf 'manager_token='
+  [ -s "$TOKEN_FILE" ] && printf 'present' || printf 'missing'
+  printf '\nuhttpd='
+  /etc/init.d/uhttpd status 2>/dev/null || printf 'unknown'
+  printf '\nwan_block='
+  uci -q get firewall.mx65_manager_wan_block.target 2>/dev/null || printf 'missing'
+  printf '\n'
+  section security
+  security_report
+  section fw_check
+  fw4 check 2>&1 || true
+  section logs
+  logread -l 80 2>/dev/null || dmesg | tail -80 2>/dev/null || true
+}
+
+cloudflared_status() {
+  plain
+  printf '__ cloudflared binary __\n'
+  if command -v cloudflared >/dev/null 2>&1; then
+    cloudflared --version 2>&1
+  else
+    printf 'cloudflared is not installed.\n'
+  fi
+  printf '\n__ service __\n'
+  if [ -x /etc/init.d/cloudflared ]; then
+    /etc/init.d/cloudflared enabled >/dev/null 2>&1 && printf 'enabled\n' || printf 'disabled\n'
+    /etc/init.d/cloudflared status 2>&1 || true
+  else
+    printf 'cloudflared init script is not installed.\n'
+  fi
+  printf '\n__ logs __\n'
+  logread -e cloudflared -l 200 2>/dev/null | awk '
+    /Starting tunnel|Registered tunnel connection/ { seen = 1 }
+    seen { print }
+    END { if (!seen) exit 1 }
+  ' || logread -e cloudflared -l 60 2>/dev/null || true
+}
+
+manager_status() {
+  plain
+  section manager
+  cat /etc/mx65-manager/manifest.json 2>/dev/null || printf '{}\n'
+  section manager_verify
+  if [ -s /etc/mx65-manager/manifest.sha256 ]; then
+    (cd / && while read -r expected relpath extra; do
+      [ -n "$expected" ] || continue
+      if [ ! -f "$relpath" ]; then
+        printf '%s: MISSING\n' "$relpath"
+        continue
+      fi
+      actual="$(sha256sum "$relpath" | awk '{print $1}')"
+      if [ "$actual" = "$expected" ]; then
+        printf '%s: OK\n' "$relpath"
+      else
+        printf '%s: FAILED\n' "$relpath"
+      fi
+    done < /etc/mx65-manager/manifest.sha256)
+  else
+    printf 'manifest.sha256 missing\n'
+  fi
+  section manager_backups
+  ls -1t /etc/mx65-manager/backups/mx65-manager-*.tgz 2>/dev/null | head -5 || true
+}
+
+manager_rollback() {
+  backup="$(ls -1t /etc/mx65-manager/backups/mx65-manager-*.tgz 2>/dev/null | head -1)"
+  [ -n "$backup" ] || fail "No router manager backup is available."
+  case "$backup" in
+    /etc/mx65-manager/backups/mx65-manager-*.tgz) ;;
+    *) fail "Unsafe backup path." ;;
+  esac
+  tar -xzf "$backup" -C / || fail "Rollback extraction failed."
+  chmod 755 /www/cgi-bin/mx65-api 2>/dev/null || true
+  chmod 644 /www/mx65/index.html /www/mx65/app.js /www/mx65/styles.css /etc/mx65-manager/manifest.json /etc/mx65-manager/manifest.sha256 /etc/banner 2>/dev/null || true
+  plain
+  printf 'Restored %s\n' "$backup"
+}
+
+op="$(param op)"
+load_post_body
+if [ "$op" = "session" ]; then
+  session_start
+  exit 0
+fi
+require_token
+case "$op" in
+  service|security-apply|security-rollback|device-note-save|port-note-save|port-action|network-lan-save|network-vlan-save|network-vlan-delete|route-save|route-delete|reservation-save|reservation-delete|port-vlan-save|outbound-rule-save|outbound-rule-delete|port-forward-save|port-forward-delete|manager-rollback)
+    require_csrf
+    ;;
+esac
+
+case "$op" in
+  snapshot) snapshot ;;
+  service) service_action ;;
+  diag) diag ;;
+  security-status) security_status ;;
+  security-apply) security_apply ;;
+  security-rollback) security_rollback ;;
+  network-lan-save) network_lan_save ;;
+  network-vlan-save) network_vlan_save ;;
+  network-vlan-delete) network_vlan_delete ;;
+  route-save) route_save ;;
+  route-delete) route_delete ;;
+  reservation-save) reservation_save ;;
+  reservation-delete) reservation_delete ;;
+  port-vlan-save) port_vlan_save ;;
+  outbound-rule-save) outbound_rule_save ;;
+  outbound-rule-delete) outbound_rule_delete ;;
+  port-forward-save) port_forward_save ;;
+  port-forward-delete) port_forward_delete ;;
+  device-note-save) device_note_save ;;
+  port-note-save) port_note_save ;;
+  port-action) port_action ;;
+  cloudflared) cloudflared_status ;;
+  manager) manager_status ;;
+  manager-rollback) manager_rollback ;;
+  *) fail "Unsupported operation." ;;
+esac

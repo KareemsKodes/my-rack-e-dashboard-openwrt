@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My-Rack-E Manager</title>
+    <link rel="stylesheet" href="/mx65/styles.css?v=2026.07.28.1" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="brand">
+          <div class="mark">MY</div>
+          <div>
+            <strong>My-Rack-E</strong>
+            <span>powered by OpenWrt</span>
+          </div>
+        </div>
+        <nav>
+          <span class="nav-group-label">Monitor</span>
+          <button class="nav active" data-panel="overview">Appliance status</button>
+          <button class="nav" data-panel="dhcp">Clients</button>
+          <button class="nav" data-panel="routeTable">Route table</button>
+          <button class="nav" data-panel="eventlog">Event log</button>
+          <button class="nav" data-panel="diagnostics">Tools</button>
+          <span class="nav-group-label">Configure</span>
+          <button class="nav" data-panel="network">Addressing &amp; VLANs</button>
+          <button class="nav" data-panel="dhcpConfig">DHCP</button>
+          <button class="nav" data-panel="security">Firewall</button>
+          <button class="nav" data-panel="nat">Port forwarding &amp; NAT</button>
+          <button class="nav" data-panel="traffic">SD-WAN &amp; traffic shaping</button>
+          <button class="nav" data-panel="tunnel">Site-to-site VPN</button>
+          <span class="nav-group-label">Appliance</span>
+          <button class="nav" data-panel="ports">Ports</button>
+          <button class="nav" data-panel="manager">Firmware &amp; updates</button>
+        </nav>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div class="context-stack">
+            <div class="context-row" aria-label="Dashboard context">
+              <span>Organization</span><strong>Local Lab</strong>
+              <span>Network</span><strong>Home lab</strong>
+              <span>Product</span><strong>My-Rack-E Security &amp; SD-WAN</strong>
+            </div>
+            <h1>My-Rack-E Firewall</h1>
+            <p><span id="releaseLine">Paste the manager token, then check status.</span><span id="statusMeta">Not checked</span></p>
+          </div>
+          <div class="auth">
+            <input id="tokenInput" type="password" placeholder="Manager token" autocomplete="current-password" />
+            <button id="saveTokenBtn">Save</button>
+            <button id="refreshBtn" class="primary">Check</button>
+          </div>
+        </header>
+
+        <section id="toast" class="toast" hidden></section>
+
+        <section class="panel active" data-panel-id="overview">
+          <section class="surface appliance-status-head">
+            <div class="appliance-identity">
+              <div class="appliance-avatar">MY</div>
+              <div>
+                <h2>Appliance status</h2>
+                <p class="note">Monitor the My-Rack-E security appliance, uplinks, addressing, DHCP, firmware, tools, and physical ports from one page.</p>
+              </div>
+              <span class="status-pill ok">Online</span>
+            </div>
+          </section>
+          <section id="healthGrid" class="health-grid"></section>
+          <section class="dashboard-grid">
+            <article class="surface">
+              <div class="surface-head"><h2>Device details</h2><span>identity</span></div>
+              <div id="deviceSummary" class="summary"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Uplink</h2><span>internet</span></div>
+              <div id="uplinkSummary" class="summary"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>DHCP utilization</h2><span>LAN pool</span></div>
+              <div id="dhcpUtilization" class="summary"></div>
+            </article>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Port status</h2><span>My-Rack-E appliance front panel</span></div>
+              <div id="dashboardPortStrip" class="mini-port-strip"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Live tools</h2><span>from the MX</span></div>
+              <div class="diag-bar meraki-tools">
+                <input id="quickDiagTarget" placeholder="1.1.1.1 or openwrt.org" />
+                <button data-diag="ping" data-diag-source="quick">Ping</button>
+                <button data-diag="nslookup" data-diag-source="quick">DNS lookup</button>
+                <button data-diag="routes" data-diag-source="quick">Internet path</button>
+              </div>
+              <div id="liveToolsStatus" class="summary">
+                <div class="summary-row"><strong>Ready</strong><span>Choose a tool to run a local appliance check.</span></div>
+              </div>
+            </article>
+          </section>
+          <section class="quick-actions" aria-label="Common actions">
+            <button data-goto-panel="ports"><strong>Ports</strong><span>physical map</span></button>
+            <button data-goto-panel="network"><strong>Addressing &amp; VLANs</strong><span>gateway and subnets</span></button>
+            <button data-goto-panel="dhcpConfig"><strong>DHCP</strong><span>leases and pool</span></button>
+            <button data-goto-panel="security"><strong>Firewall</strong><span>rules and services</span></button>
+            <button data-goto-panel="nat"><strong>Port forwarding &amp; NAT</strong><span>inbound access</span></button>
+            <button data-goto-panel="traffic"><strong>SD-WAN &amp; shaping</strong><span>uplink policy</span></button>
+            <button data-goto-panel="routeTable"><strong>Route table</strong><span>active paths</span></button>
+            <button data-goto-panel="dhcp"><strong>Clients</strong><span>devices</span></button>
+            <button data-goto-panel="tunnel"><strong>Site-to-site VPN</strong><span>Cloudflare connector</span></button>
+            <button data-goto-panel="manager"><strong>Firmware &amp; updates</strong><span>verify files</span></button>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Next Action</h2><span id="nextActionScore">Waiting</span></div>
+              <div id="nextActionList" class="action-list"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Access</h2><span id="accessScore">Waiting</span></div>
+              <div id="accessGrid" class="trust-list"></div>
+            </article>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Health Checks</h2><span id="readinessScore">0 checks</span></div>
+              <div id="readinessList" class="check-list"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Services</h2><span>state</span></div>
+              <div id="servicesList" class="summary"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="routeTable">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Route table</h2>
+                <p class="note">Active routes currently used by the MX for local, default, and VLAN traffic.</p>
+              </div>
+              <button data-diag="routes">Refresh routes</button>
+            </div>
+            <div id="routeCards" class="health-grid compact"></div>
+            <table>
+              <thead><tr><th>Destination</th><th>Gateway</th><th>Interface</th><th>Source</th><th>Metric</th></tr></thead>
+              <tbody id="routeTableBody"></tbody>
+            </table>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="routeOutput" class="terminal">No route table loaded.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="ports">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Ports</h2>
+                <p class="note">Physical My-Rack-E appliance port view with link, activity, and safe controls.</p>
+              </div>
+              <div class="button-row">
+                <button id="portLiveBtn">Live</button>
+                <button id="refreshPortsBtn">Refresh</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Green means link is active. Amber means the port is enabled but no cable/link is detected. Select a port to see traffic, clients, address role, and safe enable/disable controls.</p>
+            </details>
+            <div id="portCards" class="health-grid compact"></div>
+            <div id="mxFaceplate" class="mx-faceplate"></div>
+            <div id="portMap" class="port-map"></div>
+          </section>
+
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Selected Port</h2><span id="selectedPortName">None</span></div>
+              <div id="portDetail" class="port-detail">Choose a port.</div>
+              <div class="button-row port-actions">
+                <button id="portEnableBtn">Enable</button>
+                <button id="portDisableBtn">Disable</button>
+              </div>
+            </article>
+            <article class="surface">
+              <div class="surface-head">
+                <div>
+                  <h2>Port Label</h2>
+                  <p class="note">Local label shown only in this manager.</p>
+                </div>
+                <button id="savePortNoteBtn">Save</button>
+              </div>
+              <div class="device-note-form port-note-form">
+                <input id="portNotePort" type="hidden" />
+                <input id="portNoteLabel" placeholder="Name, e.g. Lab bench" />
+                <input id="portNotePurpose" placeholder="Purpose" />
+              </div>
+            </article>
+          </section>
+
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Port VLAN settings</h2>
+                <p class="note">Clear access/trunk settings for the selected MX LAN port.</p>
+              </div>
+              <button id="savePortVlanBtn" class="primary">Save port VLAN</button>
+            </div>
+            <div class="config-form wide">
+              <label><span>Port type</span><select id="portVlanModeInput"><option value="access">Access</option><option value="trunk">Trunk</option></select></label>
+              <label><span>Access VLAN</span><input id="portAccessVlanInput" inputmode="numeric" placeholder="1" /></label>
+              <label><span>Native VLAN</span><input id="portNativeVlanInput" inputmode="numeric" placeholder="1" /></label>
+              <label><span>Allowed VLANs</span><input id="portAllowedVlansInput" placeholder="1,69 (must include native)" /></label>
+            </div>
+            <div id="portVlanSummary" class="summary"></div>
+          </section>
+
+          <section class="surface">
+            <div class="surface-head"><h2>Port List</h2><span>physical labels</span></div>
+            <table>
+              <thead><tr><th>Port</th><th>Link</th><th>Activity</th><th>Role</th><th>Clients</th><th>VLAN settings</th><th>Network / Address</th></tr></thead>
+              <tbody id="portTable"></tbody>
+            </table>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="security">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Firewall</h2>
+                <p class="note">Layer 3/4 policy, WAN appliance services, NAT posture, and baseline protections.</p>
+              </div>
+              <div class="button-row">
+                <button id="securityStatusBtn">Check</button>
+                <button id="securityApplyBtn" class="primary">Apply</button>
+                <button id="securityRollbackBtn">Restore</button>
+                <button data-diag="firewall-check">Check Rules</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Outbound policy, WAN appliance services, and forwarding exposure are grouped together. LAN management remains available while unsolicited internet access is blocked.</p>
+            </details>
+            <div id="securityCards" class="health-grid compact"></div>
+            <div class="settings-stack">
+              <section class="setting-section">
+                <div><h3>Outbound rules</h3><p>Layer 3/4 policy for traffic from local networks to other networks or the internet.</p></div>
+                <div id="firewallOutbound" class="setting-body"></div>
+              </section>
+              <section class="setting-section">
+                <div><h3>WAN appliance services</h3><p>Local MX services reachable from the internet side of the appliance.</p></div>
+                <div id="firewallWanServices" class="setting-body"></div>
+              </section>
+              <section class="setting-section">
+                <div><h3>Layer 7 firewall rules</h3><p>Application/category filtering requires DPI packages that are not part of this base My-Rack-E build powered by OpenWrt.</p></div>
+                <div id="firewallLayer7" class="setting-body"></div>
+              </section>
+              <section class="setting-section">
+                <div><h3>Forwarding rules</h3><p>Inbound WAN forwarding, 1:1 NAT, and 1:Many NAT controls.</p></div>
+                <div class="setting-body"><button data-goto-panel="nat">Open port forwarding &amp; NAT</button></div>
+              </section>
+            </div>
+            <section class="setting-section">
+              <div>
+                <h3>Outbound rule editor</h3>
+                <p>Rules are evaluated by the MX firewall for traffic leaving local networks toward WAN.</p>
+              </div>
+              <div class="setting-body">
+                <div class="config-form wide">
+                  <input id="outboundRuleIdInput" type="hidden" />
+                  <label><span>Policy</span><select id="outboundPolicyInput"><option value="deny">Deny</option><option value="allow">Allow</option></select></label>
+                  <label><span>Protocol</span><select id="outboundProtocolInput"><option value="any">Any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></label>
+                  <label><span>Source</span><input id="outboundSourceInput" placeholder="Any or 10.69.69.0/24" /></label>
+                  <label><span>Destination</span><input id="outboundDestinationInput" placeholder="Any or 1.1.1.1/32" /></label>
+                  <label><span>Destination port</span><input id="outboundDestPortInput" placeholder="Any, 443, or 8000-8090" /></label>
+                  <label><span>Comment</span><input id="outboundCommentInput" placeholder="Block direct admin access" /></label>
+                  <label><span>Status</span><select id="outboundEnabledInput"><option value="1">Enabled</option><option value="0">Disabled</option></select></label>
+                </div>
+                <div class="button-row"><button id="saveOutboundRuleBtn" class="primary">Save outbound rule</button></div>
+                <table>
+                  <thead><tr><th>Policy</th><th>Protocol</th><th>Source</th><th>Destination</th><th>Port</th><th>Comment</th><th>Status</th><th>Action</th></tr></thead>
+                  <tbody id="outboundRuleTable"></tbody>
+                </table>
+              </div>
+            </section>
+            <div id="securityList" class="trust-list security-list"></div>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="securityOutput" class="terminal">No security check loaded.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="nat">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Port forwarding &amp; NAT</h2>
+                <p class="note">Forward WAN traffic to local hosts. Inbound access stays denied unless a rule explicitly allows it.</p>
+              </div>
+              <button id="saveForwardBtn" class="primary">Save rule</button>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Port forwarding listens on the MX WAN address and sends matching traffic to a fixed LAN host. Use a fixed IP assignment or reserved address space before exposing a service.</p>
+            </details>
+            <div id="natCards" class="health-grid compact"></div>
+            <div class="config-form wide">
+              <input id="forwardIdInput" type="hidden" />
+              <label><span>Description</span><input id="forwardDescriptionInput" placeholder="HTTPS to lab server" /></label>
+              <label><span>Uplink</span><select id="forwardUplinkInput"><option value="both">Both Internet uplinks</option></select></label>
+              <label><span>Protocol</span><select id="forwardProtocolInput"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcpudp">TCP and UDP</option></select></label>
+              <label><span>Public port</span><input id="forwardPublicPortInput" inputmode="numeric" placeholder="443" /></label>
+              <label><span>LAN host IP</span><input id="forwardLanIpInput" inputmode="decimal" placeholder="10.69.69.10" /></label>
+              <label><span>Local port</span><input id="forwardLocalPortInput" inputmode="numeric" placeholder="443" /></label>
+              <label><span>Allowed remote IPs</span><input id="forwardAllowedIpsInput" placeholder="Any or 203.0.113.10/32" /></label>
+              <label><span>Status</span><select id="forwardEnabledInput"><option value="1">Enabled</option><option value="0">Disabled</option></select></label>
+            </div>
+            <table>
+              <thead><tr><th>Description</th><th>Protocol</th><th>Public port</th><th>LAN host IP</th><th>Local port</th><th>Allowed remote IPs</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody id="forwardTable"></tbody>
+            </table>
+          </section>
+
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>1:1 NAT</h2><span>capability</span></div>
+              <div id="oneToOneNatStatus" class="summary"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>1:Many NAT</h2><span>capability</span></div>
+              <div id="oneToManyNatStatus" class="summary"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="network">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Addressing &amp; VLANs</h2>
+                <p class="note">Configure local networks, gateway addresses, DHCP pools, and access ports.</p>
+              </div>
+              <div class="button-row">
+                <button id="refreshNetworkBtn">Refresh</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Primary LAN is the management network for this MX. VLANs create additional local networks and can place selected LAN ports into those networks as access ports. Keep at least one LAN port on Primary LAN so you can still reach the manager.</p>
+            </details>
+            <div id="addressingCards" class="health-grid compact"></div>
+            <table>
+              <thead><tr><th>Network</th><th>Status</th><th>Gateway</th><th>DHCP pool</th><th>Ports</th></tr></thead>
+              <tbody id="interfacesTable"></tbody>
+            </table>
+          </section>
+
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head">
+                <div>
+                  <h2>Primary LAN</h2>
+                  <p class="note">Enter a subnet like 10.69.69.0/24 or a gateway like 10.69.69.1. My-Rack-E uses the first usable address as the gateway, reserves space for fixed infrastructure, and builds a client DHCP range from the subnet.</p>
+                </div>
+                <button id="saveLanBtn" class="primary">Save LAN</button>
+              </div>
+              <div class="config-form">
+                <label><span>Subnet or gateway</span><input id="lanIpInput" inputmode="decimal" placeholder="10.69.69.0/24 or 10.69.69.1" /></label>
+                <label><span>Subnet mask</span>
+                  <select id="lanMaskInput">
+                    <option value="255.255.255.0">255.255.255.0 /24</option>
+                    <option value="255.255.0.0">255.255.0.0 /16</option>
+                    <option value="255.255.252.0">255.255.252.0 /22</option>
+                    <option value="255.255.255.128">255.255.255.128 /25</option>
+                    <option value="255.255.255.192">255.255.255.192 /26</option>
+                  </select>
+                </label>
+                <label><span>DHCP first client</span><input id="lanDhcpStartInput" inputmode="decimal" placeholder="10.69.69.50" /></label>
+                <label><span>DHCP size</span><input id="lanDhcpLimitInput" inputmode="numeric" placeholder="150" /></label>
+                <label><span>Lease time</span><input id="lanLeaseInput" placeholder="12h" /></label>
+              </div>
+              <div class="dhcp-plan-row">
+                <button id="lanAutoDhcpBtn" type="button">Use automatic DHCP range</button>
+                <span id="lanDhcpPreview" class="dhcp-preview">DHCP range will appear after a subnet is entered.</span>
+              </div>
+              <div id="lanChangeNotice" class="config-notice">Saving a new router IP moves this page to the new address after the MX reloads networking.</div>
+            </article>
+
+            <article class="surface">
+              <div class="surface-head"><h2>Deployment settings</h2><span id="interfaceCount">0</span></div>
+              <table>
+                <thead><tr><th>Setting</th><th>Current value</th><th>Notes</th></tr></thead>
+                <tbody id="deploymentTable"></tbody>
+              </table>
+            </article>
+          </section>
+
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>VLANs</h2>
+                <p class="note">Create or update a local VLAN and optionally assign MX LAN ports as access ports.</p>
+              </div>
+              <button id="saveVlanBtn" class="primary">Save VLAN</button>
+            </div>
+            <div id="vlanCards" class="health-grid compact"></div>
+            <div class="vlan-editor">
+              <div class="config-form">
+                <label><span>VLAN ID</span><input id="vlanIdInput" inputmode="numeric" placeholder="69" /></label>
+                <label><span>Name</span><input id="vlanNameInput" placeholder="Lab" /></label>
+                <label><span>Subnet or gateway</span><input id="vlanIpInput" inputmode="decimal" placeholder="10.69.69.0/24 or 10.69.69.1" /></label>
+                <label><span>Subnet mask</span>
+                  <select id="vlanMaskInput">
+                    <option value="255.255.255.0">255.255.255.0 /24</option>
+                    <option value="255.255.0.0">255.255.0.0 /16</option>
+                    <option value="255.255.252.0">255.255.252.0 /22</option>
+                    <option value="255.255.255.128">255.255.255.128 /25</option>
+                    <option value="255.255.255.192">255.255.255.192 /26</option>
+                  </select>
+                </label>
+                <label><span>DHCP first client</span><input id="vlanDhcpStartInput" inputmode="decimal" placeholder="10.69.69.50" /></label>
+                <label><span>DHCP size</span><input id="vlanDhcpLimitInput" inputmode="numeric" placeholder="150" /></label>
+                <label><span>Lease time</span><input id="vlanLeaseInput" placeholder="12h" /></label>
+              </div>
+              <div class="dhcp-plan-row">
+                <button id="vlanAutoDhcpBtn" type="button">Use automatic DHCP range</button>
+                <span id="vlanDhcpPreview" class="dhcp-preview">DHCP range will appear after a subnet is entered.</span>
+              </div>
+              <div>
+                <div class="field-label">Access ports</div>
+                <div id="vlanPortPicker" class="port-picker"></div>
+                <p class="note">Checked ports become untagged access ports for this VLAN. Leave ports unchecked to build the network first and assign ports later.</p>
+              </div>
+            </div>
+            <table>
+              <thead><tr><th>VLAN</th><th>Name</th><th>Gateway</th><th>DHCP pool</th><th>Access ports</th><th>Action</th></tr></thead>
+              <tbody id="vlanTable"></tbody>
+            </table>
+          </section>
+
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head">
+                <div>
+                  <h2>Static routes</h2>
+                  <p class="note">Add local routes for downstream networks behind another gateway.</p>
+                </div>
+                <button id="saveRouteBtn" class="primary">Save route</button>
+              </div>
+              <div class="config-form">
+                <input id="routeIdInput" type="hidden" />
+                <label><span>Name</span><input id="routeNameInput" placeholder="Downstream lab" /></label>
+                <label><span>Subnet</span><input id="routeSubnetInput" placeholder="10.99.0.0/24" /></label>
+                <label><span>Next hop IP</span><input id="routeGatewayInput" inputmode="decimal" placeholder="10.69.69.2" /></label>
+                <label><span>Interface</span><select id="routeInterfaceInput"><option value="lan">Primary LAN</option></select></label>
+                <label><span>Status</span><select id="routeEnabledInput"><option value="1">Enabled</option><option value="0">Disabled</option></select></label>
+              </div>
+              <table>
+                <thead><tr><th>Name</th><th>Subnet</th><th>Next hop IP</th><th>Status</th><th>Action</th></tr></thead>
+                <tbody id="staticRouteTable"></tbody>
+              </table>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Dynamic DNS</h2><span>local equivalent</span></div>
+              <div id="dynamicDnsStatus" class="summary"></div>
+            </article>
+          </section>
+
+          <section class="surface">
+            <div class="surface-head"><h2>Internet Path</h2><span>active route</span></div>
+            <div id="routesOutput" class="summary"></div>
+          </section>
+          <section class="surface">
+            <div class="surface-head"><h2>Change log</h2><span>last network action</span></div>
+            <details class="advanced-box" open>
+              <summary>Network action result</summary>
+              <pre id="networkOutput" class="terminal">No network changes run.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="dhcp">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Clients</h2>
+                <p class="note">Connected devices, addresses, port observations, and saved notes.</p>
+              </div>
+              <div class="button-row">
+                <input id="deviceFilter" placeholder="Filter device, IP, MAC, issue" />
+                <button id="refreshDevicesBtn">Refresh</button>
+                <button data-service="dnsmasq" data-action="restart">Restart DHCP</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Clients are built from DHCP, neighbor records, port learning, and your saved notes. Add model/serial when a device does not report them.</p>
+            </details>
+            <div id="deviceCards" class="health-grid compact"></div>
+            <table>
+              <thead><tr><th>Device</th><th>Addresses</th><th>MAC / Vendor</th><th>Observed From</th><th>Notes</th><th>Issues</th></tr></thead>
+              <tbody id="deviceTable"></tbody>
+            </table>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Device Note</h2>
+                <p class="note">Add model, serial, role, and expected address mode when the device does not report them.</p>
+              </div>
+              <button id="saveDeviceNoteBtn">Save</button>
+            </div>
+            <div class="device-note-form">
+              <input id="noteMac" placeholder="MAC address" />
+              <input id="noteLabel" placeholder="Name / owner" />
+              <input id="noteModel" placeholder="Model" />
+              <input id="noteSerial" placeholder="Serial" />
+              <input id="noteRole" placeholder="Role, e.g. workstation, server, phone" />
+              <select id="noteExpected">
+                <option value="auto">Expected: auto</option>
+                <option value="dhcp">Expected: DHCP</option>
+                <option value="reserved">Expected: reserved</option>
+                <option value="manual">Expected: manual</option>
+              </select>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="dhcpConfig">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>DHCP</h2>
+                <p class="note">Client addressing, active leases, fixed/reserved assignments, and available pool.</p>
+              </div>
+              <div class="button-row">
+                <button id="refreshDhcpConfigBtn">Refresh</button>
+                <button data-service="dnsmasq" data-action="restart">Restart DHCP</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>This page keeps DHCP pool settings, lease counts, and reservation posture in one configure view.</p>
+            </details>
+            <div id="dhcpConfigCards" class="health-grid compact"></div>
+            <table>
+              <thead><tr><th>Network</th><th>Client addressing</th><th>Pool</th><th>Active leases</th><th>Reservations</th></tr></thead>
+              <tbody id="dhcpConfigTable"></tbody>
+            </table>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Fixed IP assignments</h2>
+                <p class="note">Reserve an address for a device by MAC address. Use reserved space outside the dynamic client pool.</p>
+              </div>
+              <button id="saveReservationBtn" class="primary">Save reservation</button>
+            </div>
+            <div class="config-form wide">
+              <label><span>Name</span><input id="reservationNameInput" placeholder="NAS" /></label>
+              <label><span>MAC address</span><input id="reservationMacInput" placeholder="aa:bb:cc:dd:ee:ff" /></label>
+              <label><span>IP address</span><input id="reservationIpInput" inputmode="decimal" placeholder="10.69.69.10" /></label>
+              <label><span>Lease time</span><input id="reservationLeaseInput" placeholder="12h" /></label>
+            </div>
+            <table>
+              <thead><tr><th>Name</th><th>MAC address</th><th>IP address</th><th>Lease time</th><th>Action</th></tr></thead>
+              <tbody id="reservationTable"></tbody>
+            </table>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="eventlog">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Event log</h2>
+                <p class="note">Recent appliance events from the MX, summarized first with details collapsed.</p>
+              </div>
+              <button data-diag="logs">Refresh log</button>
+            </div>
+            <div id="eventLogSummary" class="summary">
+              <div class="summary-row"><strong>No events loaded</strong><span>Click Refresh log or Check to load router events.</span></div>
+            </div>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="eventLogOutput" class="terminal">No event log loaded.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="diagnostics">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Tools</h2>
+                <p class="note">Common operations and where to find them.</p>
+              </div>
+            </div>
+            <div class="tool-grid">
+              <button data-goto-panel="ports"><strong>Port Map</strong><span>physical jacks, link, activity</span></button>
+              <button data-goto-panel="network"><strong>Addressing &amp; VLANs</strong><span>gateway, LAN, addresses</span></button>
+              <button data-goto-panel="dhcpConfig"><strong>DHCP</strong><span>leases, pool, reservations</span></button>
+              <button data-goto-panel="security"><strong>Firewall</strong><span>rules, services, NAT</span></button>
+              <button data-goto-panel="nat"><strong>Port forwarding &amp; NAT</strong><span>inbound services</span></button>
+              <button data-goto-panel="traffic"><strong>SD-WAN &amp; shaping</strong><span>uplinks and QoS</span></button>
+              <button data-goto-panel="routeTable"><strong>Route table</strong><span>active paths</span></button>
+              <button data-goto-panel="dhcp"><strong>Clients</strong><span>devices and notes</span></button>
+              <button data-goto-panel="tunnel"><strong>Site-to-site VPN</strong><span>Cloudflare tunnel</span></button>
+              <button data-goto-panel="manager"><strong>Firmware &amp; updates</strong><span>verify, rollback</span></button>
+            </div>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>Diagnostics</h2>
+                <p class="note">Run quick checks from the MX itself.</p>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Ping tests basic reachability. DNS checks router name resolution. Routes shows how traffic leaves the MX. Logs show recent router events.</p>
+            </details>
+            <div class="diag-bar">
+              <input id="diagTarget" placeholder="1.1.1.1 or openwrt.org" />
+              <button data-diag="ping">Ping</button>
+              <button data-diag="nslookup">DNS</button>
+              <button data-diag="routes">Internet Path</button>
+              <button data-diag="logs">Logs</button>
+              <button data-diag="firewall-check">Rules Check</button>
+            </div>
+            <div id="diagSummary" class="summary">
+              <div class="summary-row"><strong>No check run</strong><span>Pick a tool above.</span></div>
+            </div>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="diagOutput" class="terminal">No diagnostic output.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="traffic">
+          <section class="surface">
+            <div class="surface-head">
+              <div>
+                <h2>SD-WAN &amp; traffic shaping</h2>
+                <p class="note">Uplink path, shaping status, and what can be enforced by this My-Rack-E build powered by OpenWrt.</p>
+              </div>
+              <button data-diag="routes">Refresh path</button>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>This appliance exposes WAN path and OpenWrt-powered shaping state. Remote connector health is represented by Cloudflare tunnel status on the Site-to-site VPN page.</p>
+            </details>
+            <div id="trafficCards" class="health-grid compact"></div>
+            <table>
+              <thead><tr><th>Setting</th><th>Status</th><th>Details</th></tr></thead>
+              <tbody id="trafficTable"></tbody>
+            </table>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="trafficOutput" class="terminal">No traffic shaping status loaded.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="tunnel">
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Site-to-site VPN</h2>
+              <div class="button-row">
+                <button id="tunnelStatusBtn">Check</button>
+                <button data-service="cloudflared" data-action="start">Start</button>
+                <button data-service="cloudflared" data-action="stop">Stop</button>
+                <button data-service="cloudflared" data-action="restart">Restart</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Cloudflare runs as an outbound connector on the MX. Public hostnames, private routes, and access policy are still controlled in Cloudflare Zero Trust.</p>
+            </details>
+            <p class="note">Cloudflare connector controls live on the MX. Hostnames, private routes, and access policy stay in Cloudflare Zero Trust.</p>
+            <div id="tunnelCards" class="health-grid compact"></div>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="tunnelOutput" class="terminal">No Cloudflare status.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="manager">
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Firmware &amp; updates</h2>
+              <div class="button-row">
+                <button id="managerStatusBtn">Verify</button>
+                <button id="managerRollbackBtn">Rollback</button>
+              </div>
+            </div>
+            <details class="help-box">
+              <summary>Help</summary>
+              <p>Verify checks every managed file against its installed hash. Rollback restores the last manager bundle saved before an update.</p>
+            </details>
+            <p class="note">Hash-checked manager updates. Rollback restores the last saved bundle.</p>
+            <div id="managerCards" class="health-grid compact"></div>
+            <details class="advanced-box">
+              <summary>Advanced details</summary>
+              <pre id="managerOutput" class="terminal">No update check.</pre>
+            </details>
+          </section>
+        </section>
+
+        <section id="advancedData" hidden>
+          <input id="firewallFilter" />
+          <table><tbody id="firewallTable"></tbody></table>
+          <input id="dhcpFilter" />
+          <table><tbody id="dhcpTable"></tbody></table>
+          <input id="uciFilter" />
+          <table><tbody id="uciTable"></tbody></table>
+          <pre id="ifstatusOutput"></pre>
+          <pre id="logOutput"></pre>
+        </section>
+      </main>
+    </div>
+
+    <script src="/mx65/app.js?v=2026.07.28.1"></script>
+</body>
+</html>
