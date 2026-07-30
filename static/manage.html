@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="mx65-token" content="__SESSION_TOKEN__" />
+    <title>My-Rack-E Setup Console</title>
+    <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230b7f78"/><text x="32" y="41" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="white">MY</text></svg>' />
+    <link rel="stylesheet" href="/static/manage.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <div class="rail-brand">
+          <div class="brand-mark">MX</div>
+          <div>
+            <strong>My-Rack-E</strong>
+            <span>powered by OpenWrt</span>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Management sections">
+          <button class="nav-item active" data-panel="overview">Overview</button>
+          <button class="nav-item" data-panel="ports">Ports</button>
+          <button class="nav-item" data-panel="network">Network</button>
+          <button class="nav-item" data-panel="firewall">Firewall</button>
+          <button class="nav-item" data-panel="dhcp">DHCP</button>
+          <button class="nav-item" data-panel="diagnostics">Diagnostics</button>
+          <button class="nav-item" data-panel="backups">Backups</button>
+          <button class="nav-item" data-panel="localweb">Local Web</button>
+          <button class="nav-item" data-panel="tunnel">Tunnel</button>
+          <button class="nav-item" data-panel="config">Advanced</button>
+        </nav>
+        <a class="rail-link" href="/">USB setup</a>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="connection">
+            <label>
+              <span>Router</span>
+              <input id="hostInput" value="192.168.1.1" spellcheck="false" />
+            </label>
+            <label>
+              <span>User</span>
+              <input id="userInput" value="root" spellcheck="false" />
+            </label>
+            <button id="connectBtn" class="primary">Connect</button>
+            <button id="keyBtn">SSH Key</button>
+          </div>
+          <div class="top-actions">
+            <div id="connectionState" class="state-pill warn">Not connected</div>
+            <button id="refreshBtn">Refresh</button>
+          </div>
+        </header>
+
+        <section id="toast" class="toast" hidden></section>
+
+        <section id="keyPanel" class="key-panel" hidden>
+          <div>
+            <h2>Authorize GUI SSH Key</h2>
+            <p>Paste this once into an active OpenWrt SSH shell. The app never stores your root password.</p>
+          </div>
+          <textarea id="keyCommand" readonly></textarea>
+        </section>
+
+        <section class="panel active" data-panel-id="overview">
+          <div class="page-head">
+            <div>
+              <h1>My-Rack-E Setup Console</h1>
+              <p id="releaseLine">Connect to load OpenWrt status.</p>
+            </div>
+            <div class="button-row">
+              <button data-service="firewall" data-action="reload">Reload Firewall</button>
+              <button data-service="dnsmasq" data-action="restart">Restart DHCP/DNS</button>
+            </div>
+          </div>
+          <section id="healthGrid" class="health-grid"></section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Readiness</h2>
+              <span id="readinessScore" class="muted">0 checks</span>
+            </div>
+            <div id="readinessList" class="readiness-list"></div>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head">
+                <h2>Lab Audit</h2>
+                <div class="button-row">
+                  <span id="auditScore" class="muted">Not run</span>
+                  <button id="auditBtn">Run Audit</button>
+                </div>
+              </div>
+              <div id="auditList" class="check-list"></div>
+              <pre id="auditOutput" class="terminal compact">No audit run yet.</pre>
+            </article>
+            <article class="surface">
+              <div class="surface-head">
+                <h2>Snapshot History</h2>
+                <span id="historyCount" class="muted">0 snapshots</span>
+              </div>
+              <div id="snapshotHistory" class="timeline"></div>
+            </article>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head">
+                <h2>WAN / LAN</h2>
+                <span id="routeCount" class="muted">No routes</span>
+              </div>
+              <div id="interfaceSummary" class="summary-list"></div>
+            </article>
+            <article class="surface">
+              <div class="surface-head">
+                <h2>Services</h2>
+                <span class="muted">Init scripts</span>
+              </div>
+              <div id="serviceList" class="summary-list"></div>
+            </article>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Recent Logs</h2>
+              <button data-diag="logs">Refresh Logs</button>
+            </div>
+            <pre id="logPreview" class="terminal">No logs loaded.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="ports">
+          <div class="page-head">
+            <div>
+              <h1>Ports</h1>
+              <p>Live interface inventory from OpenWrt.</p>
+            </div>
+          </div>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>MX65 Port Map</h2>
+              <span class="muted">Physical roles</span>
+            </div>
+            <div id="portMap" class="port-map"></div>
+          </section>
+          <section class="surface">
+            <table>
+              <thead>
+                <tr><th>Port</th><th>Interface</th><th>Role</th><th>State</th><th>Addresses</th></tr>
+              </thead>
+              <tbody id="portsTable"></tbody>
+            </table>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="network">
+          <div class="page-head">
+            <div>
+              <h1>Network</h1>
+              <p>Inspect live interface status and prepare guarded LAN changes.</p>
+            </div>
+          </div>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>LAN</h2><span id="lanState" class="state-pill">Unknown</span></div>
+              <pre id="lanJson" class="terminal small">No data.</pre>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>WAN</h2><span id="wanState" class="state-pill">Unknown</span></div>
+              <pre id="wanJson" class="terminal small">No data.</pre>
+            </article>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Guarded LAN Profile</h2>
+              <span class="muted">Applies on next reboot</span>
+            </div>
+            <div class="form-grid lan-profile">
+              <label><span>LAN IP</span><input id="lanIpInput" placeholder="192.168.1.1" /></label>
+              <label><span>Netmask</span><input id="lanMaskInput" placeholder="255.255.255.0" /></label>
+              <label><span>DHCP Start</span><input id="lanDhcpStart" placeholder="100" /></label>
+              <label><span>DHCP Limit</span><input id="lanDhcpLimit" placeholder="150" /></label>
+              <button id="planLanProfile">Plan</button>
+              <button id="commitLanProfile" class="primary">Commit For Reboot</button>
+            </div>
+            <pre id="lanPlanOutput" class="terminal compact">No LAN profile plan yet.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="firewall">
+          <div class="page-head">
+            <div>
+              <h1>Firewall</h1>
+              <p>Zones, forwarding, port rules, and firewall validation.</p>
+            </div>
+            <button data-diag="firewall-check">Run fw4 Check</button>
+          </div>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Zones</h2><span class="muted">Firewall policy</span></div>
+              <table>
+                <thead><tr><th>Name</th><th>Network</th><th>Input</th><th>Forward</th><th>Output</th></tr></thead>
+                <tbody id="zonesTable"></tbody>
+              </table>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Forwardings</h2><span class="muted">Zone paths</span></div>
+              <table>
+                <thead><tr><th>Source</th><th>Destination</th><th>Enabled</th></tr></thead>
+                <tbody id="forwardingsTable"></tbody>
+              </table>
+            </article>
+          </section>
+          <section class="two-col">
+            <article class="surface">
+              <div class="surface-head"><h2>Port Forwards</h2><span class="muted">Inbound rules</span></div>
+              <table>
+                <thead><tr><th>Name</th><th>Proto</th><th>WAN Port</th><th>Destination</th><th>Status</th></tr></thead>
+                <tbody id="redirectsTable"></tbody>
+              </table>
+            </article>
+            <article class="surface">
+              <div class="surface-head"><h2>Traffic Rules</h2><span class="muted">Filter policy</span></div>
+              <table>
+                <thead><tr><th>Name</th><th>Source</th><th>Destination</th><th>Proto</th><th>Status</th></tr></thead>
+                <tbody id="trafficRulesTable"></tbody>
+              </table>
+            </article>
+          </section>
+          <section class="surface">
+            <div class="surface-head"><h2>Add Port Forward</h2><span class="muted">Saves and reloads firewall</span></div>
+            <div class="form-grid">
+              <label><span>Name</span><input id="pfName" placeholder="lab service" /></label>
+              <label><span>Protocol</span><select id="pfProto"><option>tcp</option><option>udp</option><option>tcp udp</option></select></label>
+              <label><span>WAN Port</span><input id="pfSrcPort" placeholder="8443" /></label>
+              <label><span>LAN IP</span><input id="pfDestIp" placeholder="192.168.1.100" /></label>
+              <label><span>LAN Port</span><input id="pfDestPort" placeholder="443" /></label>
+              <button id="addPortForward" class="primary">Add Forward</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="dhcp">
+          <div class="page-head">
+            <div>
+              <h1>DHCP</h1>
+              <p>Leases and reservations from the live router.</p>
+            </div>
+          </div>
+          <section class="surface">
+            <div class="surface-head"><h2>Active Leases</h2><span id="leaseCount" class="muted">0 clients</span></div>
+            <table>
+              <thead><tr><th>Host</th><th>IP</th><th>MAC</th><th>Expires</th></tr></thead>
+              <tbody id="leasesTable"></tbody>
+            </table>
+          </section>
+          <section class="surface">
+            <div class="surface-head"><h2>Reservations</h2><span id="reservationCount" class="muted">0 static hosts</span></div>
+            <table>
+              <thead><tr><th>Name</th><th>IP</th><th>MAC</th><th>Options</th></tr></thead>
+              <tbody id="reservationsTable"></tbody>
+            </table>
+          </section>
+          <section class="surface">
+            <div class="surface-head"><h2>Add Reservation</h2><span class="muted">Saves and restarts DHCP/DNS</span></div>
+            <div class="form-grid">
+              <label><span>Name</span><input id="dhcpName" placeholder="lab-node-1" /></label>
+              <label><span>MAC</span><input id="dhcpMac" placeholder="aa:bb:cc:dd:ee:ff" /></label>
+              <label><span>IP</span><input id="dhcpIp" placeholder="192.168.1.20" /></label>
+              <button id="addDhcpHost" class="primary">Add Reservation</button>
+            </div>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="diagnostics">
+          <div class="page-head">
+            <div>
+              <h1>Diagnostics</h1>
+              <p>Run targeted checks on the router.</p>
+            </div>
+          </div>
+          <section class="surface">
+            <div class="diag-bar">
+              <input id="diagTarget" placeholder="1.1.1.1 or openwrt.org" />
+              <button data-diag="ping">Ping</button>
+              <button data-diag="nslookup">DNS Lookup</button>
+              <button data-diag="traceroute">Traceroute</button>
+              <button data-diag="routes">Routes</button>
+              <button data-diag="logs">Logs</button>
+            </div>
+            <pre id="diagOutput" class="terminal">No diagnostic run yet.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="backups">
+          <div class="page-head">
+            <div>
+              <h1>Backups</h1>
+              <p>Capture router configuration, firewall state, interfaces, packages, and sysupgrade backup.</p>
+            </div>
+            <button id="backupBtn" class="primary">Create Backup</button>
+          </div>
+          <section class="surface">
+            <pre id="backupOutput" class="terminal">No backup created from this UI yet.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="localweb">
+          <div class="page-head">
+            <div>
+              <h1>Local Web</h1>
+              <p>Install a router-hosted manager at the MX LAN address so any local device can use it.</p>
+            </div>
+            <div class="button-row">
+              <button id="checkRouterManager">Check Installed</button>
+              <button id="rollbackRouterManager">Rollback Latest</button>
+              <button id="updateRouterManager">Apply Trusted Update</button>
+              <button id="deployRouterManager" class="primary">Install on MX</button>
+            </div>
+          </div>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>On-Router Manager</h2>
+              <span class="muted">LAN only, token protected, hash verified</span>
+            </div>
+            <div id="routerManagerResult" class="deploy-result"></div>
+            <pre id="routerManagerOutput" class="terminal">Not deployed from this browser session.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="tunnel">
+          <div class="page-head">
+            <div>
+              <h1>Cloudflare Tunnel</h1>
+              <p>Run cloudflared directly on the MX. This does not publish the local manager unless the Cloudflare tunnel token is configured to do that.</p>
+            </div>
+            <button id="cfStatusBtn">Status</button>
+          </div>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Install Managed Tunnel</h2>
+              <span class="muted">Paste the token from Cloudflare Zero Trust</span>
+            </div>
+            <div class="form-grid tunnel-grid">
+              <label><span>Tunnel Token</span><input id="cfToken" type="password" placeholder="eyJ..." autocomplete="off" /></label>
+              <button id="cfInstallBtn" class="primary">Install / Update</button>
+              <button data-cf-service-action="start">Start</button>
+              <button data-cf-service-action="stop">Stop</button>
+              <button data-cf-service-action="restart">Restart</button>
+            </div>
+            <pre id="cfOutput" class="terminal compact">No Cloudflare Tunnel status loaded.</pre>
+          </section>
+        </section>
+
+        <section class="panel" data-panel-id="config">
+          <div class="page-head">
+            <div>
+              <h1>Advanced</h1>
+              <p>Direct OpenWrt configuration editor for recovery and expert changes.</p>
+            </div>
+          </div>
+          <section class="surface">
+            <div class="form-grid uci-edit">
+              <label><span>Configuration path</span><input id="uciPath" placeholder="dhcp.lan.limit" /></label>
+              <label><span>Value</span><input id="uciValue" placeholder="150" /></label>
+              <label class="check"><input id="uciCommit" type="checkbox" checked /><span>Commit package</span></label>
+              <button id="uciSetBtn" class="primary">Set Advanced Value</button>
+            </div>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Pending Changes</h2>
+              <div class="button-row">
+                <button id="loadChangesBtn">Load Changes</button>
+                <button data-commit-package="network">Commit Network</button>
+                <button data-commit-package="dhcp">Commit DHCP</button>
+                <button data-commit-package="firewall">Commit Firewall</button>
+              </div>
+            </div>
+            <div id="pendingChanges" class="pending-grid"></div>
+            <div class="button-row danger-row">
+              <button data-revert-package="network">Revert Network</button>
+              <button data-revert-package="dhcp">Revert DHCP</button>
+              <button data-revert-package="firewall">Revert Firewall</button>
+            </div>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>OpenWrt Snapshot</h2>
+              <input id="uciFilter" class="table-filter" placeholder="Filter configuration paths" />
+            </div>
+            <table>
+              <thead><tr><th>Path</th><th>Value</th></tr></thead>
+              <tbody id="uciTable"></tbody>
+            </table>
+          </section>
+          <section class="surface">
+            <div class="surface-head">
+              <h2>Action Log</h2>
+              <button id="clearActionLog">Clear</button>
+            </div>
+            <div id="actionLog" class="action-log"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/manage.js"></script>
+  </body>
+</html>

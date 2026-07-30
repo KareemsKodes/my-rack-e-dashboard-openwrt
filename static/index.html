@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="mx65-token" content="__SESSION_TOKEN__" />
+    <title>My-Rack-E Dashboard Setup</title>
+    <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%230b7f78"/><text x="32" y="41" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="white">MY</text></svg>' />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="top">
+        <div class="brand">
+          <div class="mark">MY</div>
+          <div>
+            <h1>My-Rack-E Dashboard Setup</h1>
+            <p>Prepare the OpenWrt conversion USB and install the local firewall dashboard.</p>
+          </div>
+        </div>
+        <a class="manage-link" href="/manage">Open setup console</a>
+      </header>
+
+      <section class="hero-panel">
+        <div>
+          <span class="eyebrow">Stock appliance conversion</span>
+          <h2>Prepare the USB, convert the MX65, install the dashboard.</h2>
+          <p>The macOS app formats the drive, copies the bundle, and verifies every required file.</p>
+        </div>
+        <div class="safety-stack" aria-label="Safety checks">
+          <span>Offline router only</span>
+          <span>USB erase requires confirmation</span>
+          <span>Certified MX65 workflow</span>
+        </div>
+      </section>
+
+      <section class="profile-panel">
+        <label>
+          <span>Device profile</span>
+          <select id="profileSelect"></select>
+        </label>
+        <div id="profileState" class="profile-state">Loading device profiles.</div>
+        <button id="liveProfiles" type="button">Verify OpenWrt support</button>
+      </section>
+
+      <section class="step-rail" aria-label="Setup steps">
+        <div><strong>1</strong><span>Download</span></div>
+        <div><strong>2</strong><span>Format USB</span></div>
+        <div><strong>3</strong><span>Copy + verify</span></div>
+        <div><strong>4</strong><span>Flash + install</span></div>
+      </section>
+
+      <section class="defaults-panel" aria-label="Default values">
+        <div><span>Setup machine</span><strong>macOS</strong></div>
+        <div><span>USB</span><strong>MX65FLASH / FAT32 / MBR</strong></div>
+        <div><span>Recovery LAN</span><strong>router 192.168.1.1 / laptop 192.168.1.2</strong></div>
+        <div><span>Lab LAN helper</span><strong>10.69.69.0/24 -> gateway 10.69.69.1</strong></div>
+      </section>
+
+      <section class="guide-panel" aria-label="Guided conversion checklist">
+        <article class="guide-card">
+          <h2>Flash drive workflow</h2>
+          <ol class="checklist">
+            <li id="guideStepDownload"><span class="check-badge"></span><span class="guide-label">Download conversion bundle for the selected profile.</span></li>
+            <li id="guideStepFormat"><span class="check-badge"></span><span class="guide-label">Format a removable USB as FAT32 + MBR and name it MX65FLASH.</span></li>
+            <li id="guideStepCopy"><span class="check-badge"></span><span class="guide-label">Copy bundle files and verify them against SHA-256.</span></li>
+            <li id="guideStepVerify"><span class="check-badge"></span><span class="guide-label">Read READ_ME_FIRST_MX65.txt before using the USB on the router.</span></li>
+          </ol>
+        </article>
+
+        <article class="guide-card">
+          <h2>After flashing the MX65</h2>
+          <p>When OpenWrt boots, keep the laptop directly connected and check:</p>
+          <pre class="inline-code">ping 192.168.1.1</pre>
+          <p class="note">Then complete in order:</p>
+          <ol class="compact-list">
+            <li>Set root password and confirm <code>/etc/openwrt_release</code>.</li>
+            <li>From the same macOS machine, run <code>install-and-activate.sh</code>.</li>
+            <li>Open <code>http://192.168.1.1/mx65/</code>, save the token, then click Check.</li>
+            <li>Open Setup Console for HTTPS trust, Cloudflare Tunnel, backups, and firewall hardening.</li>
+          </ol>
+          <p class="note"><strong>Direct connection:</strong> use a LAN port and keep the MX65 off the home LAN/WAN path until installation is complete.</p>
+          <p class="note">Full sequence: <code>docs/FLASHING.md</code>.</p>
+          <a class="manage-link" href="/manage">Open setup console</a>
+        </article>
+      </section>
+
+      <section id="status" class="status">Ready.</section>
+
+      <section class="grid">
+        <section class="card">
+          <div class="card-head">
+            <span>1</span>
+            <h2>Download files</h2>
+          </div>
+          <p class="plain">Downloads the verified bundle for the selected certified profile: U-Boot, OpenWrt initramfs, sysupgrade, and USB instructions.</p>
+          <button id="downloadBundle" class="primary wide">Download Conversion Bundle</button>
+          <div id="bundleState" class="result">No conversion bundle checked yet.</div>
+        </section>
+
+        <section class="card danger-card">
+          <div class="card-head">
+            <span>2</span>
+            <h2>Format USB</h2>
+          </div>
+          <p class="plain">Erases one removable external USB disk and formats it FAT32/MBR as MX65FLASH.</p>
+          <div id="diskList" class="volumes"></div>
+          <label>
+            <span>External disk</span>
+            <input id="formatDisk" spellcheck="false" placeholder="diskN" />
+          </label>
+          <label>
+            <span>Erase confirmation</span>
+            <input id="formatPhrase" spellcheck="false" placeholder="ERASE MX65FLASH" />
+          </label>
+          <div class="actions">
+            <button id="refreshDisks">Find USB Disks</button>
+            <button id="formatUsb" class="danger">Erase + Format USB</button>
+          </div>
+          <div id="formatState" class="result warn">No disk selected.</div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <span>3</span>
+            <h2>Select USB</h2>
+          </div>
+          <div id="volumeList" class="volumes"></div>
+          <label>
+            <span>USB mount path</span>
+            <input id="usbPath" spellcheck="false" placeholder="/Volumes/MX65FLASH" />
+          </label>
+          <div class="actions">
+            <button id="inspectUsb">Check USB</button>
+          </div>
+          <div id="usbState" class="result">No USB checked yet.</div>
+        </section>
+
+        <section class="card main-card">
+          <div class="card-head">
+            <span>4</span>
+            <h2>Copy + verify</h2>
+          </div>
+          <label class="check">
+            <input id="overwrite" type="checkbox" />
+            <span>Overwrite same-named files on USB</span>
+          </label>
+          <div class="actions">
+            <button id="copyUsb" class="primary">Copy Bundle To USB</button>
+            <button id="verifyUsb">Verify USB</button>
+          </div>
+          <pre id="resultLog">Nothing copied yet.</pre>
+        </section>
+      </section>
+
+      <section class="after-panel">
+        <div>
+          <h2>After the USB is ready</h2>
+          <p>Use the generated USB instructions for the stock MX65 bootloader step. After OpenWrt boots, use Setup Console to install the dashboard, trusted HTTPS, Cloudflare Tunnel, backups, and firewall hardening.</p>
+        </div>
+        <a class="manage-link primary-link" href="/manage">Continue to setup console</a>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
