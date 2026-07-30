@@ -1,0 +1,48 @@
+{
+  "checked_at": "2026-06-30",
+  "checked_timezone": "America/Chicago",
+  "latest_release_checked": "25.12.5",
+  "release_index_url": "https://downloads.openwrt.org/releases/",
+  "profile_url": "https://downloads.openwrt.org/releases/25.12.5/targets/bcm53xx/generic/profiles.json",
+  "download_base_url": "https://downloads.openwrt.org/releases/25.12.5/targets/bcm53xx/generic/",
+  "source_makefile_url": "https://github.com/openwrt/openwrt/blob/v25.12.5/target/linux/bcm53xx/image/Makefile#L441-L476",
+  "target": "bcm53xx/generic",
+  "profile_id": "meraki_mx65",
+  "version_number": "25.12.5",
+  "version_code": "r33051-f5dae5ece4",
+  "source_date_epoch": 1782737960,
+  "profile": {
+    "device_packages": [
+      "-oseama",
+      "kmod-leds-pwm",
+      "kmod-usb-ehci",
+      "kmod-usb-ohci",
+      "kmod-usb2"
+    ],
+    "image_prefix": "openwrt-25.12.5-bcm53xx-generic-meraki_mx65",
+    "images": [
+      {
+        "filesystem": "squashfs",
+        "name": "openwrt-25.12.5-bcm53xx-generic-meraki_mx65-squashfs.sysupgrade.bin",
+        "sha256": "972e0b7683ce294a08b921133bda3de09eca7b790ebaaae3749f6c8d032d2bc9",
+        "sha256_unsigned": "972e0b7683ce294a08b921133bda3de09eca7b790ebaaae3749f6c8d032d2bc9",
+        "size": 6154501,
+        "type": "sysupgrade"
+      }
+    ],
+    "supported_devices": [
+      "meraki,mx65"
+    ],
+    "titles": [
+      {
+        "model": "MX65",
+        "vendor": "Cisco Meraki"
+      }
+    ]
+  },
+  "notes": [
+    "The official OpenWrt release metadata for MX65 currently exposes a sysupgrade image for target bcm53xx/generic.",
+    "This guide does not include or execute a bootloader write. Any U-Boot or bootloader conversion step must be verified against current device-specific instructions before use.",
+    "MX65W internal Wi-Fi should be treated as unavailable for this home-lab firewall plan."
+  ]
+}

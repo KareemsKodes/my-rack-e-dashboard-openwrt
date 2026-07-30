@@ -1,0 +1,36 @@
+{
+  "id": "meraki_mx64",
+  "vendor": "Cisco Meraki",
+  "model": "MX64",
+  "display_name": "Cisco Meraki MX64",
+  "status": "recognized",
+  "certification": {
+    "dashboard": "not_tested",
+    "stock_conversion_usb": "blocked_until_verified",
+    "trusted_update": "not_tested",
+    "last_verified": "2026-07-18"
+  },
+  "openwrt_target": "bcm53xx/generic",
+  "openwrt_profile": "meraki_mx64",
+  "official_profile_url": "https://downloads.openwrt.org/releases/25.12.5/targets/bcm53xx/generic/profiles.json",
+  "official_sysupgrade_image": "openwrt-25.12.5-bcm53xx-generic-meraki_mx64-squashfs.sysupgrade.bin",
+  "default_lan_cidr": "192.168.1.0/24",
+  "default_gateway": "192.168.1.1",
+  "dhcp_policy": {
+    "gateway": "first_usable",
+    "reserve_low_addresses": 20,
+    "client_pool_start_offset": 50,
+    "client_pool_end_offset": 240
+  },
+  "conversion": {
+    "stock_usb": {
+      "supported": false,
+      "blocked_reason": "OpenWrt publishes an MX64 sysupgrade image, but this project does not yet include tested MX64 stock-conversion bootloader metadata."
+    }
+  },
+  "ports": [],
+  "notes": [
+    "Recognized from official OpenWrt bcm53xx/generic release metadata.",
+    "Add tested port metadata and conversion instructions before enabling destructive setup actions."
+  ]
+}
