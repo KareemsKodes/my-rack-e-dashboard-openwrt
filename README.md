@@ -72,7 +72,7 @@ Full setup instructions are in [docs/SETUP.md](docs/SETUP.md).
 | Stock recovery router IP | `192.168.1.1` |
 | Direct laptop IP | `192.168.1.2/24` |
 | Router-hosted dashboard | `http://192.168.1.1/mx65/` |
-| Optional lab LAN | `10.69.69.0/24` -> gateway `10.69.69.1` |
+| Optional lab LAN | `10.10.10.0/24` -> gateway `10.10.10.1` |
 | DHCP helper policy | gateway is first usable IP; low addresses stay reserved for infrastructure; client pool starts later in the subnet |
 
 ### Fast ops

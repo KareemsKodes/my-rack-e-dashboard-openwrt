@@ -50,7 +50,7 @@ JSON-style MCP config:
       "command": "python3",
       "args": ["/absolute/path/to/my-rack-e-dashboard/mcp/myracke_mcp.py"],
       "env": {
-        "MX65_HOST": "10.69.69.1",
+        "MX65_HOST": "10.10.10.1",
         "MX65_USER": "root"
       }
     }
@@ -66,7 +66,7 @@ command = "python3"
 args = ["/absolute/path/to/my-rack-e-dashboard/mcp/myracke_mcp.py"]
 
 [mcp_servers.myracke.env]
-MX65_HOST = "10.69.69.1"
+MX65_HOST = "10.10.10.1"
 MX65_USER = "root"
 ```
 

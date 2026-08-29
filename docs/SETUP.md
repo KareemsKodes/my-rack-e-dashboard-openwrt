@@ -22,8 +22,8 @@ This guide covers the certified Cisco Meraki MX65 path: create the USB on macOS,
 | Direct laptop IP | `192.168.1.2/24` |
 | Root SSH user after OpenWrt boots | `root` |
 | Dashboard URL on default LAN | `http://192.168.1.1/mx65/` |
-| Optional lab LAN | `10.69.69.0/24` |
-| Optional lab gateway | `10.69.69.1` |
+| Optional lab LAN | `10.10.10.0/24` |
+| Optional lab gateway | `10.10.10.1` |
 | DHCP helper policy | first usable IP is the gateway; low addresses are reserved for infrastructure; the client pool starts later in the subnet |
 
 ## 1. Start the setup app
@@ -114,10 +114,10 @@ http://192.168.1.1/mx65/
 
 Paste the manager token and click `Save`, then `Check`.
 
-If you changed the LAN to `10.69.69.0/24`, open:
+If you changed the LAN to `10.10.10.0/24`, open:
 
 ```text
-https://10.69.69.1/mx65/
+https://10.10.10.1/mx65/
 ```
 
 If you ever lose the cached browser token after restart:
@@ -133,7 +133,7 @@ Paste the reported token in the dashboard, then click `Save` and `Check`.
 After the dashboard works over HTTP:
 
 ```sh
-./scripts/trust-mx65-https.sh 10.69.69.1
+./scripts/trust-mx65-https.sh 10.10.10.1
 ```
 
 This creates a constrained local CA, trusts it in the macOS login keychain, installs a router certificate, and enables HTTPS redirect for the local manager.
@@ -143,7 +143,7 @@ This creates a constrained local CA, trusts it in the macOS login keychain, inst
 Use the dashboard `Firewall` page or:
 
 ```sh
-python3 scripts/mx65ctl.py --host 10.69.69.1 harden-security
+python3 scripts/mx65ctl.py --host 10.10.10.1 harden-security
 ```
 
 The hardening path backs up configuration first, validates firewall syntax, reloads services, and keeps rollback data.

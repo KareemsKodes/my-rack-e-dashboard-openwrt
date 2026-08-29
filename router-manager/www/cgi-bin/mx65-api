@@ -723,7 +723,7 @@ normalize_gateway_input() {
   label="$3"
   case "$value" in
     */*)
-      valid_cidr "$value" || fail "$label must be a gateway IP or subnet CIDR, for example 10.69.69.0/24."
+      valid_cidr "$value" || fail "$label must be a gateway IP or subnet CIDR, for example 10.10.10.0/24."
       cidr_ip="${value%/*}"
       cidr_prefix="${value#*/}"
       normalized_netmask="$(prefix_to_netmask "$cidr_prefix")" || fail "$label CIDR prefix is unsupported."

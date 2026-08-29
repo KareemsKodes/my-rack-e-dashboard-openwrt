@@ -16,8 +16,8 @@
   "official_sysupgrade_image": "openwrt-25.12.5-bcm53xx-generic-meraki_mx65-squashfs.sysupgrade.bin",
   "default_lan_cidr": "192.168.1.0/24",
   "default_gateway": "192.168.1.1",
-  "recommended_lab_lan_cidr": "10.69.69.0/24",
-  "recommended_lab_gateway": "10.69.69.1",
+  "recommended_lab_lan_cidr": "10.10.10.0/24",
+  "recommended_lab_gateway": "10.10.10.1",
   "dhcp_policy": {
     "gateway": "first_usable",
     "reserve_low_addresses": 20,

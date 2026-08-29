@@ -3,7 +3,7 @@ set -eu
 
 DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 ROOT="$(CDPATH= cd -- "$DIR/.." && pwd)"
-HOST="${1:-${MX65_HOST:-${MX65_DEFAULT_HOST:-10.69.69.1}}}"
+HOST="${1:-${MX65_HOST:-${MX65_DEFAULT_HOST:-10.10.10.1}}}"
 USER="${MX65_USER:-root}"
 SSH_KEY="${MX65_SSH_KEY:-$ROOT/data/mx65_gui_ed25519}"
 CERT_DIR="$ROOT/data/certs"
@@ -17,7 +17,7 @@ SERVER_CFG="$CERT_DIR/mx65-server.openssl.cnf"
 KEYCHAIN="${MX65_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 
 case "$HOST" in
-  *[!0-9.]*|"") echo "Use the MX IP address, for example: $0 10.69.69.1" >&2; exit 1 ;;
+  *[!0-9.]*|"") echo "Use the MX IP address, for example: $0 10.10.10.1" >&2; exit 1 ;;
 esac
 
 mkdir -p "$CERT_DIR"
@@ -46,7 +46,7 @@ nameConstraints = critical, @name_constraints
 [ name_constraints ]
 permitted;DNS.1 = mx65.local
 permitted;DNS.2 = openwrt.lan
-permitted;IP.1 = 10.69.69.1/255.255.255.255
+permitted;IP.1 = 10.10.10.1/255.255.255.255
 permitted;IP.2 = 192.168.1.1/255.255.255.255
 CFG
 
@@ -85,7 +85,7 @@ DNS.1 = mx65.local
 DNS.2 = openwrt.lan
 IP.1 = $HOST
 IP.2 = 192.168.1.1
-IP.3 = 10.69.69.1
+IP.3 = 10.10.10.1
 CFG
 
 openssl genrsa -out "$SERVER_KEY" 2048 >/dev/null 2>&1

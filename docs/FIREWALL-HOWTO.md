@@ -29,12 +29,12 @@ Examples:
 
 - `192.168.1.1`
 - `192.168.1.0/24`
-- `10.69.69.0/24`
+- `10.10.10.0/24`
 
 For a subnet input, My-Rack-E uses the first usable address as the gateway:
 
 ```text
-10.69.69.0/24 -> gateway 10.69.69.1
+10.10.10.0/24 -> gateway 10.10.10.1
 ```
 
 The default DHCP pattern reserves low addresses for infrastructure and uses a client pool later in the subnet. That keeps room for router, switches, servers, hypervisors, printers, and fixed lab hosts.
@@ -102,7 +102,7 @@ Recommended baseline:
 The hardening script:
 
 ```sh
-python3 scripts/mx65ctl.py --host 10.69.69.1 harden-security
+python3 scripts/mx65ctl.py --host 10.10.10.1 harden-security
 ```
 
 backs up current UCI config, applies baseline rules, validates, and leaves rollback data.
@@ -159,7 +159,7 @@ After updating:
 Create a backup before major changes:
 
 ```sh
-python3 scripts/mx65ctl.py --host 10.69.69.1 backup
+python3 scripts/mx65ctl.py --host 10.10.10.1 backup
 ```
 
 Rollback the manager:

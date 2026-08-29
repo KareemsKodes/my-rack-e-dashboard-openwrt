@@ -97,7 +97,7 @@ Dashboard and scripts use OpenWrt UCI commands, then validate before reload wher
 - Firewall changes: `uci set firewall...`, `fw4 check`, `uci commit firewall`
 - Service reloads: `/etc/init.d/network`, `/etc/init.d/dnsmasq`, `/etc/init.d/firewall`, `/etc/init.d/uhttpd`
 
-Addressing helpers use Cisco-style logic for common home-lab subnetting: when a subnet such as `10.69.69.0/24` is entered, the gateway is the first usable address, `10.69.69.1`, and DHCP is placed in a client range with low addresses reserved for infrastructure.
+Addressing helpers use Cisco-style logic for common home-lab subnetting: when a subnet such as `10.10.10.0/24` is entered, the gateway is the first usable address, `10.10.10.1`, and DHCP is placed in a client range with low addresses reserved for infrastructure.
 
 ## Data that must not be committed
 

@@ -274,7 +274,7 @@
                   <input id="outboundRuleIdInput" type="hidden" />
                   <label><span>Policy</span><select id="outboundPolicyInput"><option value="deny">Deny</option><option value="allow">Allow</option></select></label>
                   <label><span>Protocol</span><select id="outboundProtocolInput"><option value="any">Any</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="icmp">ICMP</option></select></label>
-                  <label><span>Source</span><input id="outboundSourceInput" placeholder="Any or 10.69.69.0/24" /></label>
+                  <label><span>Source</span><input id="outboundSourceInput" placeholder="Any or 10.10.10.0/24" /></label>
                   <label><span>Destination</span><input id="outboundDestinationInput" placeholder="Any or 1.1.1.1/32" /></label>
                   <label><span>Destination port</span><input id="outboundDestPortInput" placeholder="Any, 443, or 8000-8090" /></label>
                   <label><span>Comment</span><input id="outboundCommentInput" placeholder="Block direct admin access" /></label>
@@ -315,7 +315,7 @@
               <label><span>Uplink</span><select id="forwardUplinkInput"><option value="both">Both Internet uplinks</option></select></label>
               <label><span>Protocol</span><select id="forwardProtocolInput"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="tcpudp">TCP and UDP</option></select></label>
               <label><span>Public port</span><input id="forwardPublicPortInput" inputmode="numeric" placeholder="443" /></label>
-              <label><span>LAN host IP</span><input id="forwardLanIpInput" inputmode="decimal" placeholder="10.69.69.10" /></label>
+              <label><span>LAN host IP</span><input id="forwardLanIpInput" inputmode="decimal" placeholder="10.10.10.10" /></label>
               <label><span>Local port</span><input id="forwardLocalPortInput" inputmode="numeric" placeholder="443" /></label>
               <label><span>Allowed remote IPs</span><input id="forwardAllowedIpsInput" placeholder="Any or 203.0.113.10/32" /></label>
               <label><span>Status</span><select id="forwardEnabledInput"><option value="1">Enabled</option><option value="0">Disabled</option></select></label>
@@ -365,12 +365,12 @@
               <div class="surface-head">
                 <div>
                   <h2>Primary LAN</h2>
-                  <p class="note">Enter a subnet like 10.69.69.0/24 or a gateway like 10.69.69.1. My-Rack-E uses the first usable address as the gateway, reserves space for fixed infrastructure, and builds a client DHCP range from the subnet.</p>
+                  <p class="note">Enter a subnet like 10.10.10.0/24 or a gateway like 10.10.10.1. My-Rack-E uses the first usable address as the gateway, reserves space for fixed infrastructure, and builds a client DHCP range from the subnet.</p>
                 </div>
                 <button id="saveLanBtn" class="primary">Save LAN</button>
               </div>
               <div class="config-form">
-                <label><span>Subnet or gateway</span><input id="lanIpInput" inputmode="decimal" placeholder="10.69.69.0/24 or 10.69.69.1" /></label>
+                <label><span>Subnet or gateway</span><input id="lanIpInput" inputmode="decimal" placeholder="10.10.10.0/24 or 10.10.10.1" /></label>
                 <label><span>Subnet mask</span>
                   <select id="lanMaskInput">
                     <option value="255.255.255.0">255.255.255.0 /24</option>
@@ -380,7 +380,7 @@
                     <option value="255.255.255.192">255.255.255.192 /26</option>
                   </select>
                 </label>
-                <label><span>DHCP first client</span><input id="lanDhcpStartInput" inputmode="decimal" placeholder="10.69.69.50" /></label>
+                <label><span>DHCP first client</span><input id="lanDhcpStartInput" inputmode="decimal" placeholder="10.10.10.50" /></label>
                 <label><span>DHCP size</span><input id="lanDhcpLimitInput" inputmode="numeric" placeholder="150" /></label>
                 <label><span>Lease time</span><input id="lanLeaseInput" placeholder="12h" /></label>
               </div>
@@ -413,7 +413,7 @@
               <div class="config-form">
                 <label><span>VLAN ID</span><input id="vlanIdInput" inputmode="numeric" placeholder="69" /></label>
                 <label><span>Name</span><input id="vlanNameInput" placeholder="Lab" /></label>
-                <label><span>Subnet or gateway</span><input id="vlanIpInput" inputmode="decimal" placeholder="10.69.69.0/24 or 10.69.69.1" /></label>
+                <label><span>Subnet or gateway</span><input id="vlanIpInput" inputmode="decimal" placeholder="10.10.10.0/24 or 10.10.10.1" /></label>
                 <label><span>Subnet mask</span>
                   <select id="vlanMaskInput">
                     <option value="255.255.255.0">255.255.255.0 /24</option>
@@ -423,7 +423,7 @@
                     <option value="255.255.255.192">255.255.255.192 /26</option>
                   </select>
                 </label>
-                <label><span>DHCP first client</span><input id="vlanDhcpStartInput" inputmode="decimal" placeholder="10.69.69.50" /></label>
+                <label><span>DHCP first client</span><input id="vlanDhcpStartInput" inputmode="decimal" placeholder="10.10.10.50" /></label>
                 <label><span>DHCP size</span><input id="vlanDhcpLimitInput" inputmode="numeric" placeholder="150" /></label>
                 <label><span>Lease time</span><input id="vlanLeaseInput" placeholder="12h" /></label>
               </div>
@@ -456,7 +456,7 @@
                 <input id="routeIdInput" type="hidden" />
                 <label><span>Name</span><input id="routeNameInput" placeholder="Downstream lab" /></label>
                 <label><span>Subnet</span><input id="routeSubnetInput" placeholder="10.99.0.0/24" /></label>
-                <label><span>Next hop IP</span><input id="routeGatewayInput" inputmode="decimal" placeholder="10.69.69.2" /></label>
+                <label><span>Next hop IP</span><input id="routeGatewayInput" inputmode="decimal" placeholder="10.10.10.2" /></label>
                 <label><span>Interface</span><select id="routeInterfaceInput"><option value="lan">Primary LAN</option></select></label>
                 <label><span>Status</span><select id="routeEnabledInput"><option value="1">Enabled</option><option value="0">Disabled</option></select></label>
               </div>
@@ -564,7 +564,7 @@
             <div class="config-form wide">
               <label><span>Name</span><input id="reservationNameInput" placeholder="NAS" /></label>
               <label><span>MAC address</span><input id="reservationMacInput" placeholder="aa:bb:cc:dd:ee:ff" /></label>
-              <label><span>IP address</span><input id="reservationIpInput" inputmode="decimal" placeholder="10.69.69.10" /></label>
+              <label><span>IP address</span><input id="reservationIpInput" inputmode="decimal" placeholder="10.10.10.10" /></label>
               <label><span>Lease time</span><input id="reservationLeaseInput" placeholder="12h" /></label>
             </div>
             <table>

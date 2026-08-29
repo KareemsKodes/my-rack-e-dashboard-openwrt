@@ -1828,7 +1828,7 @@ def normalize_gateway_input(value: str, netmask: str) -> tuple[str, str]:
             prefix = ipaddress.IPv4Network(f"0.0.0.0/{netmask}").prefixlen
             interface = ipaddress.IPv4Interface(f"{value}/{prefix}")
     except ValueError as exc:
-        raise ValueError("LAN address must be a gateway IP or subnet CIDR, for example 10.69.69.0/24.") from exc
+        raise ValueError("LAN address must be a gateway IP or subnet CIDR, for example 10.10.10.0/24.") from exc
     network = interface.network
     if network.prefixlen < 1 or network.prefixlen > 30:
         raise ValueError("LAN subnet must have a usable gateway address.")

@@ -7,7 +7,7 @@ Default target:
 You can set a workspace default once instead of repeating `MX65_HOST`:
 
 ```sh
-export MX65_DEFAULT_HOST=10.69.69.1
+export MX65_DEFAULT_HOST=10.10.10.1
 ```
 
 ```sh
@@ -18,7 +18,7 @@ MX65_USER=root
 Override the target inline when needed:
 
 ```sh
-MX65_HOST=10.69.69.1 ./check-status.sh
+MX65_HOST=10.10.10.1 ./check-status.sh
 ```
 
 ## First Install / Activation
